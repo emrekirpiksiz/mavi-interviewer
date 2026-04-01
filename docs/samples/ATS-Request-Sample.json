@@ -1,0 +1,227 @@
+{
+  "position": {
+    "company": {
+      "name": "TechCorp",
+      "industry": "E-ticaret",
+      "size": "200-500 çalışan",
+      "tech_stack": ["React", "Node.js", "PostgreSQL", "AWS"]
+    },
+    "title": "Senior Frontend Developer",
+    "responsibilities": [
+      "React ve TypeScript ile karmaşık UI componentleri geliştirme",
+      "Sayfa performans optimizasyonları yapma",
+      "Junior geliştiricilere teknik mentorluk sağlama",
+      "Code review süreçlerini yönetme",
+      "Ürün ve tasarım ekipleriyle işbirliği yapma"
+    ],
+    "requirements": [
+      "En az 4 yıl frontend geliştirme deneyimi",
+      "React ile en az 3 yıl deneyim",
+      "TypeScript bilgisi",
+      "Responsive tasarım ve CSS framework deneyimi",
+      "Git ve CI/CD süreçlerine hakimiyet",
+      "İyi derecede İngilizce"
+    ]
+  },
+
+  "interview_topics": [
+    {
+      "category": "technical",
+      "topic": "React",
+      "description": "React hooks, component lifecycle, state management, performance optimization",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 7,
+        "importance": 5
+      },
+      "evaluation_guide": "Hooks kullanımı, useEffect dependency array, useMemo/useCallback farkı, React.memo kullanımı sor. Custom hook yazabilmeli. Minimum 7 puan bekleniyor, altı elenir."
+    },
+    {
+      "category": "technical",
+      "topic": "TypeScript",
+      "description": "Type system, generics, utility types, type inference",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 6,
+        "importance": 5
+      },
+      "evaluation_guide": "Interface vs Type farkı, generic kullanımı, union/intersection types sor. Gerçek projede nasıl kullandığını anlat dedirt. Minimum 6, altı elenir."
+    },
+    {
+      "category": "technical",
+      "topic": "CSS/Tailwind",
+      "description": "Flexbox, Grid, responsive design, Tailwind utility classes",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 3
+      },
+      "evaluation_guide": "Flexbox vs Grid ne zaman kullanılır, responsive breakpoint stratejisi, Tailwind deneyimi sor. 5 altı düşük ama tek başına eleyici değil."
+    },
+    {
+      "category": "technical",
+      "topic": "State Management",
+      "description": "Redux, Zustand, Context API, server state (React Query)",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 6,
+        "importance": 4
+      },
+      "evaluation_guide": "Hangi durumda hangi çözümü tercih eder, Redux vs Context farkı, server state vs client state ayrımı. 6 altı zayıf."
+    },
+    {
+      "category": "technical",
+      "topic": "Testing",
+      "description": "Unit test, integration test, Jest, React Testing Library",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 4,
+        "importance": 2
+      },
+      "evaluation_guide": "Test yazıyor mu, hangi tool'ları kullanıyor, test coverage yaklaşımı. 4 altı kabul edilebilir ama gelişim beklenir."
+    },
+    {
+      "category": "technical",
+      "topic": "Performance Optimization",
+      "description": "Lazy loading, code splitting, bundle size, Core Web Vitals",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 4
+      },
+      "evaluation_guide": "Lighthouse kullanımı, LCP/FID/CLS ne demek, bundle analizi yapmış mı. Senior için 5 altı zayıf."
+    },
+    {
+      "category": "technical",
+      "topic": "Git & CI/CD",
+      "description": "Branching strategy, PR süreçleri, deployment pipelines",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 3
+      },
+      "evaluation_guide": "Git flow veya trunk-based hangisini kullanıyor, conflict çözme, CI/CD pipeline kurmuş mu."
+    },
+    {
+      "category": "experience",
+      "topic": "E-ticaret/Ölçek Deneyimi",
+      "description": "Yüksek trafikli, büyük kullanıcı kitlesine sahip projelerde çalışma deneyimi",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 4
+      },
+      "evaluation_guide": "Kaç kullanıcılı sistemlerde çalıştı, ölçek problemleriyle karşılaştı mı, nasıl çözdü. E-ticaret deneyimi artı puan."
+    },
+    {
+      "category": "experience",
+      "topic": "Teknik Liderlik",
+      "description": "Mentorluk, code review, teknik karar alma deneyimi",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 4
+      },
+      "evaluation_guide": "Kaç kişiye mentorluk yaptı, code review sürecini nasıl yönetiyor, teknik kararları nasıl alıyor. Senior için kritik."
+    },
+    {
+      "category": "experience",
+      "topic": "Proje Sahipliği",
+      "description": "Baştan sona bir özellik veya modül sahiplenme deneyimi",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 3
+      },
+      "evaluation_guide": "Hangi projelerde ownership aldı, sonuçları nasıldı, engellerle nasıl başa çıktı."
+    },
+    {
+      "category": "soft_skills",
+      "topic": "İletişim",
+      "description": "Teknik konuları açık anlatabilme, yazılı ve sözlü iletişim",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 6,
+        "importance": 5
+      },
+      "evaluation_guide": "Görüşme boyunca gözlemle. Karmaşık bir konuyu basitçe anlatabiliyor mu, sorulara net cevap veriyor mu."
+    },
+    {
+      "category": "soft_skills",
+      "topic": "Problem Çözme",
+      "description": "Analitik düşünme, sistematik yaklaşım, yaratıcı çözümler",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 6,
+        "importance": 5
+      },
+      "evaluation_guide": "Zor bir teknik problemi nasıl çözdüğünü anlattır. Yaklaşımı sistematik mi, alternatif düşünüyor mu."
+    },
+    {
+      "category": "soft_skills",
+      "topic": "Takım Çalışması",
+      "description": "İşbirliği, geri bildirim alma/verme, çatışma yönetimi",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 5,
+        "importance": 4
+      },
+      "evaluation_guide": "Ekip içi anlaşmazlık örneği iste, nasıl çözdüğünü sor. Geri bildirimi nasıl alıyor/veriyor."
+    },
+    {
+      "category": "soft_skills",
+      "topic": "Öğrenme İsteği",
+      "description": "Yeni teknolojilere açıklık, kendini geliştirme motivasyonu",
+      "scoring": {
+        "scale": "0-10",
+        "minimum_expected": 6,
+        "importance": 3
+      },
+      "evaluation_guide": "Son öğrendiği teknoloji ne, nasıl öğrendi, yan projeler var mı. Meraklı mı yoksa sadece iş mi yapıyor."
+    }
+  ],
+
+  "candidate": {
+    "name": "Ahmet Yılmaz",
+    "experiences": [
+      {
+        "title": "Senior Frontend Developer",
+        "company": "TechMart (E-ticaret)",
+        "duration": "Mart 2022 - Halen (2 yıl 10 ay)",
+        "description": "2M+ aktif kullanıcılı e-ticaret platformunda React/TypeScript ile geliştirme. Sayfa yüklenme süresini %40 azalttım. 3 junior geliştiriciye mentorluk, haftalık code review seansları. Mikro-frontend mimarisine geçiş projesinde aktif rol."
+      },
+      {
+        "title": "Frontend Developer",
+        "company": "FinApp (Fintech Startup)",
+        "duration": "Ocak 2020 - Şubat 2022 (2 yıl 2 ay)",
+        "description": "Yatırım takibi web uygulamasını React ile sıfırdan geliştirdim. D3.js ile interaktif grafikler, Redux ile state management. REST API entegrasyonları ve CI/CD pipeline kurulumu."
+      },
+      {
+        "title": "Junior Frontend Developer",
+        "company": "WebAjans (Dijital Ajans)",
+        "duration": "Haziran 2018 - Aralık 2019 (1 yıl 7 ay)",
+        "description": "15+ kurumsal web sitesi geliştirdim. jQuery'den React'e geçiş sürecinde aktif rol aldım. HTML, CSS, JavaScript, responsive tasarım."
+      }
+    ],
+    "education": [
+      {
+        "degree": "Lisans - Bilgisayar Mühendisliği",
+        "school": "Orta Doğu Teknik Üniversitesi (ODTÜ)",
+        "duration": "2014 - 2018",
+        "gpa": "3.2/4.0"
+      }
+    ],
+    "skills": [
+      "React (4.5 yıl)",
+      "TypeScript (3 yıl)",
+      "JavaScript (6 yıl)",
+      "Next.js (2 yıl)",
+      "Redux (4 yıl)",
+      "Tailwind CSS (1.5 yıl)",
+      "Node.js (2.5 yıl)",
+      "Jest (2 yıl)",
+      "Git (6 yıl)",
+      "Agile/Scrum (4 yıl)"
+    ]
+  }
+}

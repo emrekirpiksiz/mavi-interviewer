@@ -1,0 +1,24 @@
+Request:
+curl --request POST \
+  --url https://api.simli.ai/audioToVideoStream \
+  --header 'Content-Type: application/json' \
+  --data '
+{
+  "simliAPIKey": "<string>",
+  "faceId": "cace3ef7-a4c4-425d-a8cf-a5358eb0c427",
+  "audioBase64": "<string>",
+  "audioFormat": "mp3",
+  "audioSampleRate": 16000,
+  "audioChannelCount": 1,
+  "videoStartingFrame": 0,
+  "disableSuperRes": false
+}
+'
+
+
+
+Response:
+{
+  "hls_url": "http://api.simli.ai/hls/path-to-file/output.m3u8",
+  "mp4_url": "http://api.simli.ai/mp4/path-to-file/output.mp4"
+}

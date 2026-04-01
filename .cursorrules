@@ -1,0 +1,382 @@
+# AI Interview - Cursor Rules
+
+## PROJE KIMLIGI
+
+Bu proje **AI Interview** - yapay zeka destekli gercek zamanli sesli gorusme sistemidir.
+
+**Tech Stack:**
+- Frontend: Next.js 15 (App Router), TailwindCSS, shadcn/ui, Zustand
+- Backend: Node.js + Express.js, PostgreSQL
+- AI Services: Claude Sonnet 4.5, OpenAI Whisper (STT), ElevenLabs Turbo (TTS), Simli (Avatar)
+- Realtime: WebSocket (ws package)
+- Package Manager: pnpm (monorepo)
+
+**Durum:** Phase 1-6 tamamlandi. Sistem calisiyor. Yeni ozellikler `docs/features/` altindan planlanir.
+
+---
+
+## DOKUMANTASYON HARITASI
+
+Bu projenin detayli dokumantasyonu vardir. Islem tipine gore ilgili dokumanlari oku.
+
+### Mimari & Plan Dokumanlari (docs/plans/)
+
+| Dokuman | Icerik | Ne Zaman Oku |
+|---------|--------|--------------|
+| `01-system-architecture.md` | Mimari, data flow, tech stack | Her zaman |
+| `02-database-design.md` | Tablolar, JSONB yapisi, migration'lar | DB islerinde |
+| `03-api-design.md` | REST endpoints, WebSocket events | API islerinde |
+| `04-project-structure.md` | Klasor yapisi, dosya agaci | Dosya olustururken |
+| `05-interview-engine.md` | Claude prompts, fazlar, state machine | Interview logic |
+| `06-realtime-pipeline.md` | Whisper STT, ElevenLabs TTS, Simli avatar | Audio islerinde |
+| `07-frontend-architecture.md` | UI components, hooks, Zustand store | Frontend islerinde |
+| `08-security-auth.md` | Guvenlik, API keys, CORS, rate limiting | Auth/security |
+| `09-task-breakdown.md` | Tum task'lar ve kabul kriterleri | Referans |
+
+### Feature & Workflow Dokumanlari
+
+| Dokuman | Icerik | Ne Zaman Oku |
+|---------|--------|--------------|
+| `docs/features/backlog.md` | Gelecek ozellik listesi (oncelikli) | Yeni feature planlarken |
+| `docs/features/README.md` | Feature plan sablonu ve surec | Yeni feature olustururken |
+| `docs/WORKFLOW.md` | Vibe coding workflow kurallari | Gelistirme baslarken |
+| `docs/README.md` | Proje ozeti, status, env variables | Genel bilgi icin |
+
+### Kilavuzlar (docs/guides/)
+
+| Dokuman | Icerik | Ne Zaman Oku |
+|---------|--------|--------------|
+| `create-session-guide.md` | Session olusturma API kilavuzu | ATS entegrasyonunda |
+| `matchmind-api-guide.md` | MatchMind HR Portal webhook API | Webhook islerinde |
+
+---
+
+## IS AKISI KURALLARI
+
+### Feature Planlama
+
+Yeni bir ozellik planlanirken:
+1. `docs/features/backlog.md` dosyasini oku - mevcut backlog'u gor
+2. `docs/features/README.md` dosyasindaki sablonu kullan
+3. Ilgili plan dokumanlarini referans al (mimari, API, DB vb.)
+4. `docs/features/<feature-name>.md` olarak plan olustur
+5. Plandan sapma gerekiyorsa KULLANICIYA SOR
+
+### Gelistirme (Feature Implementation)
+
+Bir feature implement edilirken:
+1. Feature plan dosyasini oku (`docs/features/<feature-name>.md`)
+2. Ilgili plan dokumanlarini oku (04-project-structure, ilgili bolumler)
+3. Kabul kriterlerini kontrol et
+4. Kod yazildiginda dokumanlari guncelle (README, plan dokumanlari)
+
+### Bugfix
+
+Bir bug duzeltilirken:
+1. Ilgili kodun bulundugu alanin plan dokumanini oku
+2. `docs/plans/04-project-structure.md` ile dosya konumlarini dogrula
+3. Fix sonrasi ilgili dokumanlar etkileniyorsa guncelle
+
+### Code Review / Refactor
+
+Kod inceleme veya refactor islerinde:
+1. `docs/plans/01-system-architecture.md` ile mimari kararlari dogrula
+2. `docs/plans/04-project-structure.md` ile naming/structure kurallarini kontrol et
+3. Ilgili bolumun plan dokumanini referans al
+
+---
+
+## KRITIK KURALLAR
+
+### 1. PLANA SADAKAT
+
+```
+YAPIN:
+- docs/plans/ dokumanlarini referans alin
+- Kabul kriterlerini karsilayin
+- Belirsizliklerde SORUN
+
+YAPMAYIN:
+- Planda olmayan feature eklemeyin
+- "Iyilestirme" adi altinda scope genisletmeyin
+- Varsayim yapmayin
+```
+
+### 2. BASITLIK PRENSIBI
+
+```
+YAPIN:
+- En basit cozumu tercih edin
+- Over-engineering'den kacinin
+
+YAPMAYIN:
+- Gelecek icin "hazirlik" yapmayin
+- Gereksiz abstraction eklemeyin
+- Kullanilmayacak kod yazmayin
+```
+
+### 3. IKILEMDE SOR
+
+```
+Eger:
+- Bir karardan emin degilsen
+- Plandan sapma gerekiyor gibi gorunuyorsa
+- Birden fazla yaklasim mumkunse
+
+→ KULLANICIYA SOR, varsayim yapma
+```
+
+### 4. DOKUMANLARI GUNCEL TUT
+
+```
+Kod degisikligi yapildiginda:
+- Yeni dosya/endpoint eklendiyse → 04-project-structure.md, 03-api-design.md guncelle
+- Mimari degisiklik varsa → 01-system-architecture.md guncelle
+- Feature tamamlandiysa → docs/features/backlog.md'de "Tamamlanan" bolumune tasi
+- docs/README.md status tablosunu guncelle
+```
+
+---
+
+## DOSYA YAPISI KURALLARI
+
+### Monorepo Yapisi
+
+```
+ai-interview/
+├── apps/
+│   ├── api/              # Express.js backend
+│   │   └── src/
+│   │       ├── routes/       # REST endpoints
+│   │       ├── services/     # Business logic
+│   │       ├── websocket/    # WS server & handlers
+│   │       ├── db/           # DB connection & queries
+│   │       ├── middleware/    # Express middleware
+│   │       └── config/       # Environment config
+│   └── web/              # Next.js frontend
+│       └── src/
+│           ├── app/          # App Router pages
+│           ├── components/   # UI components
+│           ├── hooks/        # Custom React hooks
+│           ├── stores/       # Zustand stores
+│           └── lib/          # Utilities
+├── packages/
+│   └── shared/           # Ortak types, constants
+└── docs/                 # Dokumantasyon
+    ├── plans/                # Mimari plan dokumanlari
+    ├── features/             # Gelecek ozellik planlari
+    ├── guides/               # Entegrasyon kilavuzlari
+    └── samples/              # Ornek data
+```
+
+### Naming Conventions
+
+```typescript
+// Files
+sessionService.ts     // camelCase
+useWebSocket.ts       // hooks: use prefix
+interviewStore.ts     // stores: store suffix
+
+// Components
+TranscriptPanel.tsx   // PascalCase
+ControlBar.tsx
+
+// Types
+interface SessionData { }  // PascalCase
+type InterviewState = ... // PascalCase
+
+// Constants
+const MAX_DURATION_MINUTES = 30;  // UPPER_SNAKE_CASE
+const phases = ['introduction', ...];  // camelCase for arrays
+
+// Functions
+async function createSession() { }  // camelCase
+function handleMessage() { }
+```
+
+---
+
+## TEKNIK STANDARTLAR
+
+### Backend (Express.js)
+
+```typescript
+// Route pattern
+router.post('/sessions', validate(schema), controller.create);
+
+// Service pattern
+class SessionService {
+  async create(data: CreateSessionInput): Promise<Session> { }
+}
+
+// Error handling
+try {
+  // logic
+} catch (error) {
+  console.error('[ServiceName] Error:', error);
+  throw error;
+}
+```
+
+### Frontend (Next.js)
+
+```typescript
+// Page component
+export default function InterviewPage({ params }: { params: { sessionId: string } }) {
+  const { session, pageState } = useInterviewStore();
+  
+  if (pageState === 'loading') return <LoadingScreen />;
+  // ...
+}
+
+// Hook pattern
+export function useWebSocket() {
+  const [isConnected, setIsConnected] = useState(false);
+  // ...
+  return { connect, disconnect, send, isConnected };
+}
+```
+
+### Database
+
+```sql
+-- Migration naming: 001_description.sql, 002_description.sql
+
+-- Always use UUID for IDs
+id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+
+-- Always include timestamps
+created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+
+-- Soft delete
+deleted_at TIMESTAMP WITH TIME ZONE
+```
+
+### WebSocket Events
+
+```typescript
+// Client → Server
+{ event: 'interview:start', data: {} }
+{ event: 'candidate:speaking:end', data: {} }
+
+// Server → Client
+{ event: 'connection:ready', data: { session: {...} } }
+{ event: 'ai:speaking:start', data: { text: '...' } }
+```
+
+---
+
+## UI STANDARTLARI
+
+### Dark Mode Only
+
+```css
+/* globals.css temel renk paleti */
+--bg-primary: #0a0a0f;
+--bg-secondary: #12121a;
+--text-primary: #ffffff;
+--text-secondary: #a0a0b0;
+--accent-primary: #3b82f6;
+```
+
+### Component Patterns
+
+```tsx
+// shadcn/ui kullan
+import { Button } from '@/components/ui/button';
+
+// Conditional className
+<div className={cn(
+  'base-classes',
+  isActive && 'active-classes'
+)}>
+
+// Loading states
+if (isLoading) return <Spinner />;
+```
+
+---
+
+## FEATURE TAMAMLAMA CHECKLIST
+
+Bir feature tamamlandiginda kontrol et:
+
+```markdown
+### Functionality
+- [ ] Kabul kriterleri karsilandi
+- [ ] Edge case'ler handle edildi
+
+### Code Quality
+- [ ] TypeScript hatalari yok
+- [ ] Lint hatalari yok
+
+### Documentation
+- [ ] docs/features/backlog.md guncellendi (Tamamlanan bolumune tasindi)
+- [ ] docs/README.md status guncellendi
+- [ ] Etkilenen plan dokumanlari guncellendi
+- [ ] Yeni dosyalar 04-project-structure.md'ye eklendi
+
+### Plan Uyumu
+- [ ] Ekstra feature eklenmedi
+- [ ] Scope disina cikilmadi
+```
+
+---
+
+## ILETISIM KURALLARI
+
+### Belirsizlik Durumunda
+
+```
+"Bu konuda planda net bir bilgi bulamadim. 
+Secenekler:
+A) [secenek]
+B) [secenek]
+Hangisini tercih edersiniz?"
+```
+
+### Plandan Sapma Gerektiginde
+
+```
+"Planda [X] seklinde belirtilmis, ancak [Y] nedeniyle 
+farkli bir yaklasim gerekebilir. Devam edeyim mi?"
+```
+
+### Is Tamamlandiginda
+
+```
+"[Is adi] tamamlandi.
+Kabul kriterleri: [liste]
+Guncellenen dokumanlar: [liste]
+```
+
+---
+
+## YASAK LISTESI
+
+1. **Planda olmayan feature ekleme**
+2. **"Nice to have" implementasyonu**
+3. **Varsayimla ilerleme**
+4. **Dokumanlari guncellemeden gecme**
+5. **Over-engineering**
+6. **Premature optimization**
+7. **Kullanici onayı olmadan git push/commit**
+
+---
+
+## HIZLI REFERANSLAR
+
+- **Mimari:** `@docs/plans/01-system-architecture.md`
+- **API Design:** `@docs/plans/03-api-design.md`
+- **Proje Yapisi:** `@docs/plans/04-project-structure.md`
+- **Task Listesi:** `@docs/plans/09-task-breakdown.md`
+- **Feature Backlog:** `@docs/features/backlog.md`
+- **Feature Sablonu:** `@docs/features/README.md`
+- **Workflow:** `@docs/WORKFLOW.md`
+- **Sample Data:** `@docs/samples/ATS-Request-Sample.json`
+- **TUM PLAN DOKUMANLARI:** `@docs/plans`
+
+---
+
+*Bu rules dosyasi AI Interview projesi icin ozellestirilmistir.*
+*Her context'te bu kurallara uyulmalidir.*
