@@ -38,7 +38,7 @@ export function checkBrowserCompatibility(): BrowserCheckResult {
   if (!isChrome) issues.push('non-chrome');
 
   return {
-    isSupported: isChrome && !isMobile,
+    isSupported: isMobile || isChrome,
     isMobile,
     isChrome,
     browserName,
@@ -46,16 +46,6 @@ export function checkBrowserCompatibility(): BrowserCheckResult {
   };
 }
 
-export function getBrowserWarningMessage(result: BrowserCheckResult): string {
-  const { isMobile, isChrome } = result;
-
-  if (isMobile && !isChrome) {
-    return 'Bu görüşme şu anda yalnızca masaüstü bilgisayarlarda Google Chrome tarayıcısı ile desteklenmektedir. Lütfen bilgisayarınızdan Chrome ile tekrar deneyin.';
-  }
-
-  if (isMobile) {
-    return 'Bu görüşme şu anda yalnızca masaüstü bilgisayarlarda Google Chrome tarayıcısı ile desteklenmektedir. Lütfen bilgisayarınızdan Chrome tarayıcısı ile tekrar deneyin. Mobil cihaz desteği üzerinde çalışıyoruz.';
-  }
-
+export function getBrowserWarningMessage(_result: BrowserCheckResult): string {
   return 'Bu görüşme şu anda yalnızca Google Chrome tarayıcısı ile desteklenmektedir. Lütfen Chrome tarayıcısı ile tekrar deneyin. Diğer tarayıcı desteği için testlerimiz devam etmektedir.';
 }
