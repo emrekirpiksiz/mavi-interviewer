@@ -6,7 +6,7 @@ import { query } from '../index.js';
 
 // ---------- Types ----------
 
-export type WebhookType = 'matchmind_status' | 'matchmind_transaction';
+export type WebhookType = 'assessment_callback';
 
 interface WebhookLogRow {
   id: string;

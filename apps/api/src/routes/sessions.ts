@@ -25,8 +25,6 @@ import { REST_ERROR_CODES } from '@ai-interview/shared';
 const router: RouterType = Router();
 
 // ---------- POST /sessions ----------
-// Create a new interview session (called by ATS)
-// Protected: API key auth + rate limiting
 
 router.post(
   '/',
@@ -38,10 +36,12 @@ router.post(
       const body = req.body as CreateSessionBody;
 
       const response = await createInterviewSession({
-        position: body.position,
-        interview_topics: body.interview_topics,
+        assessment: body.assessment,
+        questions: body.questions,
         candidate: body.candidate,
         settings: body.settings,
+        externalId: body.externalId,
+        callbackUrl: body.callbackUrl,
       });
 
       res.status(201).json(response);
@@ -53,7 +53,6 @@ router.post(
 );
 
 // ---------- GET /sessions/:sessionId ----------
-// Get session details
 
 router.get(
   '/:sessionId',
@@ -69,7 +68,7 @@ router.get(
           success: false,
           error: {
             code: REST_ERROR_CODES.SESSION_NOT_FOUND,
-            message: 'Görüşme bulunamadı',
+            message: 'Değerlendirme oturumu bulunamadı',
           },
         });
         return;
@@ -84,7 +83,6 @@ router.get(
 );
 
 // ---------- GET /sessions/:sessionId/transcript ----------
-// Get transcript for a session
 
 router.get(
   '/:sessionId/transcript',
@@ -100,19 +98,18 @@ router.get(
           success: false,
           error: {
             code: REST_ERROR_CODES.SESSION_NOT_FOUND,
-            message: 'Görüşme bulunamadı',
+            message: 'Değerlendirme oturumu bulunamadı',
           },
         });
         return;
       }
 
-      // Check if session is completed
       if (response.data.status !== 'completed') {
         res.status(400).json({
           success: false,
           error: {
             code: REST_ERROR_CODES.SESSION_NOT_COMPLETED,
-            message: 'Görüşme henüz tamamlanmadı',
+            message: 'Değerlendirme henüz tamamlanmadı',
           },
         });
         return;
@@ -127,8 +124,6 @@ router.get(
 );
 
 // ---------- POST /sessions/:sessionId/disconnect ----------
-// Browser close detection via sendBeacon
-// Best-effort logging, always returns 200
 
 router.post(
   '/:sessionId/disconnect',
@@ -151,7 +146,6 @@ router.post(
 
       res.status(200).json({ success: true });
     } catch (error) {
-      // Best-effort: always return 200, even on failure
       console.error('Error logging disconnect event:', error);
       res.status(200).json({ success: true });
     }

@@ -41,11 +41,36 @@
   html {
     @apply antialiased;
     color-scheme: dark;
+    -webkit-text-size-adjust: 100%;
   }
 
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: none;
+  }
+
+  /* Mobile Safari: prevent pull-to-refresh and rubber-banding on interview screen */
+  .interview-screen {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    touch-action: none;
+  }
+
+  /* Mobile viewport height fix: dvh with vh fallback */
+  .h-screen-safe {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /* Safe area padding utilities */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
   }
 
   /* Custom scrollbar for dark mode */
@@ -64,6 +89,14 @@
 
   ::-webkit-scrollbar-thumb:hover {
     @apply bg-border-hover;
+  }
+
+  /* Hide scrollbar on mobile for cleaner UI */
+  @media (max-width: 768px) {
+    ::-webkit-scrollbar {
+      width: 0px;
+      display: none;
+    }
   }
 }
 

@@ -64,7 +64,7 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY apps/api/migrations ./apps/api/migrations
 
 # Port
-EXPOSE 3001
+EXPOSE 2223
 
 # Başlat
 WORKDIR /app/apps/api

@@ -83,7 +83,7 @@ export function useNetworkCheck(): UseNetworkCheckReturn {
       }
 
       // Method 2: Try to fetch from our API with timeout
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
       
       try {
         const controller = new AbortController();
@@ -262,7 +262,7 @@ export function useNetworkCheck(): UseNetworkCheckReturn {
 
   // Measure ping latency to API server
   const measurePing = useCallback(async (): Promise<number | null> => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
     
     try {
       const controller = new AbortController();

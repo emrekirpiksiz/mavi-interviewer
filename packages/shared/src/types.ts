@@ -1,23 +1,14 @@
 // ============================================
-// AI INTERVIEW - SHARED TYPES
+// ORIENTATION ASSESSMENT - SHARED TYPES
 // ============================================
 
 // ---------- ENUMS ----------
 
 export type SessionStatus = 'pending' | 'active' | 'completed' | 'failed';
 
-export type InterviewPhase = 
-  | 'introduction'
-  | 'experience'
-  | 'technical'
-  | 'behavioral'
-  | 'motivation'
-  | 'closing';
+export type AssessmentPhase = 'introduction' | 'assessment' | 'closing';
 
 export type SpeakerType = 'ai' | 'candidate';
-
-// 1: Nice to have, 2: Low, 3: Medium, 4: High, 5: Critical (must have)
-export type TopicImportance = 1 | 2 | 3 | 4 | 5;
 
 // ---------- SESSION ----------
 
@@ -29,89 +20,59 @@ export interface ConversationMessage {
 export interface Session {
   id: string;
   status: SessionStatus;
-  currentPhase: InterviewPhase;
+  currentPhase: AssessmentPhase;
   currentQuestionIndex: number;
+  externalId: string | null;
+  callbackUrl: string | null;
   startedAt: string | null;
   endedAt: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
-  // Session persistence fields (optional - only present when loaded)
   conversationHistory?: ConversationMessage[];
   lastAiMessage?: string | null;
-  phaseQuestionCounts?: Record<InterviewPhase, number>;
+  phaseQuestionCounts?: Record<AssessmentPhase, number>;
   interviewState?: string;
 }
 
-// ---------- INTERVIEW CONFIG ----------
+// ---------- ASSESSMENT CONFIG ----------
 
-export interface Company {
-  name: string;
-  industry?: string;
-  size?: string;
-  tech_stack?: string[];
-}
-
-export interface Position {
-  company: Company;
+export interface Assessment {
   title: string;
-  responsibilities: string[];
-  requirements: string[];
+  introText: string;
+  closingText: string;
 }
 
-export interface Experience {
-  title: string;
-  company: string;
-  duration: string;
-  description?: string;
+export interface AssessmentQuestion {
+  id: string;
+  order: number;
+  text: string;
+  category: string;
+  correctOnWrong: boolean;
+  correctAnswer: string;
 }
 
-export interface Education {
-  degree: string;
-  school: string;
-  duration: string;
-  gpa?: string;
-}
-
-export interface Candidate {
+export interface AssessmentCandidate {
   name: string;
-  experiences?: Experience[];
-  education?: Education[];
-  skills?: string[];
+  email?: string;
+  personnelCode?: string;
+  position?: string;
+  store?: string;
 }
 
-export interface TopicScoring {
-  scale: string;
-  minimum_expected: number;
-  importance: TopicImportance;
+export interface AssessmentSettings {
+  cameraMonitoring?: boolean;
+  maxDurationMinutes?: number;
+  language?: string;
 }
 
-export interface InterviewTopic {
-  category: 'technical' | 'behavioral' | 'experience' | 'motivation' | 'soft_skills';
-  topic: string;
-  description?: string;
-  scoring?: TopicScoring;
-  evaluation_guide?: string;
-}
-
-// ---------- SESSION SETTINGS ----------
-
-export interface CameraSettings {
-  enabled: boolean;
-  recordVideo?: boolean; // default true when camera enabled
-}
-
-export interface SessionSettings {
-  camera?: CameraSettings;
-}
-
-export interface InterviewConfig {
+export interface AssessmentConfig {
   id: string;
   sessionId: string;
-  positionData: Position;
-  candidateData: Candidate;
-  topics: InterviewTopic[];
-  settings?: SessionSettings;
+  assessmentData: Assessment;
+  questionsData: AssessmentQuestion[];
+  candidateData: AssessmentCandidate;
+  settings?: AssessmentSettings;
   createdAt: string;
   deletedAt: string | null;
 }
@@ -124,7 +85,7 @@ export interface TranscriptEntry {
   sequenceNumber: number;
   speaker: SpeakerType;
   content: string;
-  phase: InterviewPhase;
+  phase: AssessmentPhase;
   questionContext: string | null;
   timestampMs: number;
   createdAt: string;
@@ -147,7 +108,7 @@ export type SessionEventType =
   | 'reconnect_failed'
   | 'interrupt_triggered'
   | 'error_occurred'
-  | 'ats_callback_sent'
+  | 'callback_sent'
   | 'camera_face_lost'
   | 'camera_face_restored'
   | 'camera_gaze_away'
@@ -167,10 +128,12 @@ export interface SessionEvent {
 // ---------- API TYPES ----------
 
 export interface CreateSessionRequest {
-  position: Position;
-  interview_topics: InterviewTopic[];
-  candidate: Candidate;
-  settings?: SessionSettings;
+  assessment: Assessment;
+  questions: AssessmentQuestion[];
+  candidate: AssessmentCandidate;
+  settings?: AssessmentSettings;
+  externalId?: string;
+  callbackUrl?: string;
 }
 
 export interface CreateSessionResponse {
@@ -188,7 +151,7 @@ export interface GetSessionResponse {
   data: {
     sessionId: string;
     status: SessionStatus;
-    currentPhase: InterviewPhase;
+    currentPhase: AssessmentPhase;
     currentQuestionIndex: number;
     startedAt: string | null;
     endedAt: string | null;
@@ -196,9 +159,8 @@ export interface GetSessionResponse {
     candidate: {
       name: string;
     };
-    position: {
+    assessment: {
       title: string;
-      company: string;
     };
   };
 }
@@ -207,8 +169,8 @@ export interface TranscriptEntryResponse {
   sequence: number;
   speaker: SpeakerType;
   content: string;
-  phase: InterviewPhase;
-  topic: string | null;
+  phase: AssessmentPhase;
+  questionContext: string | null;
   timestampMs: number;
 }
 
@@ -220,9 +182,8 @@ export interface GetTranscriptResponse {
     candidate: {
       name: string;
     };
-    position: {
+    assessment: {
       title: string;
-      company: string;
     };
     duration: {
       startedAt: string;
@@ -243,7 +204,7 @@ export interface ApiErrorResponse {
 
 // ---------- WEBSOCKET EVENTS ----------
 
-// Client → Server
+// Client -> Server
 export interface WSInterviewStartEvent {
   event: 'interview:start';
   data: Record<string, never>;
@@ -326,31 +287,27 @@ export type WSClientEvent =
   | WSInterviewResumeEvent
   | WSCameraIntegrityEvent;
 
-// Server → Client
+// Server -> Client
 export interface WSConnectionReadyEvent {
   event: 'connection:ready';
   data: {
     sessionId: string;
     status: SessionStatus;
-    currentPhase: InterviewPhase;
+    currentPhase: AssessmentPhase;
     currentQuestionIndex: number;
     candidate: {
       name: string;
     };
-    position: {
+    assessment: {
       title: string;
-      company: string;
     };
-    config: {
-      phases: InterviewPhase[];
-    };
-    settings?: SessionSettings;
-    // Reconnection data (optional - only present for active sessions)
+    totalQuestions: number;
+    settings?: AssessmentSettings;
     isReconnect?: boolean;
     existingTranscript?: Array<{
       speaker: SpeakerType;
       content: string;
-      phase: InterviewPhase;
+      phase: AssessmentPhase;
       timestamp: number;
     }>;
     elapsedSeconds?: number;
@@ -375,17 +332,15 @@ export interface WSAiGeneratingEndEvent {
   data: Record<string, never>;
 }
 
-// Görüşmede sıranın kimde olduğunu belirtir
 export type InterviewTurn = 'ai' | 'candidate';
 
 export interface WSAiSpeakingStartEvent {
   event: 'ai:speaking:start';
   data: {
     text: string;
-    phase: InterviewPhase;
-    topic: string | null;
-    reasoning: string | null; // AI'ın neden bu soruyu sorduğunun kısa açıklaması (demo modu için)
-    turn: InterviewTurn; // Sıra kimde? AI kısa cevap verip devam edecekse 'ai', aday cevap verecekse 'candidate'
+    phase: AssessmentPhase;
+    questionId: string | null;
+    turn: InterviewTurn;
   };
 }
 
@@ -397,17 +352,8 @@ export interface WSAiSpeakingEndEvent {
 export interface WSPhaseChangedEvent {
   event: 'phase:changed';
   data: {
-    from: InterviewPhase;
-    to: InterviewPhase;
-    questionIndex: number;
-  };
-}
-
-export interface WSQuestionNewEvent {
-  event: 'question:new';
-  data: {
-    phase: InterviewPhase;
-    topic: string | null;
+    from: AssessmentPhase;
+    to: AssessmentPhase;
     questionIndex: number;
   };
 }
@@ -464,30 +410,19 @@ export interface NetworkMetric {
   service: NetworkMetricService;
   operation: string;
   durationMs: number;
-  inputSize?: number;  // bytes
-  outputSize?: number; // bytes
+  inputSize?: number;
+  outputSize?: number;
   timestamp: number;
   metadata?: {
-    // Common
     model?: string;
-    
-    // OpenAI specific (tokens)
     inputTokens?: number;
     outputTokens?: number;
-    
-    // ElevenLabs specific (characters)
     textLength?: number;
     voiceId?: string;
     audioDurationMs?: number;
-    
-    // Whisper specific (audio duration)
     audioLengthMs?: number;
-    
-    // Simli specific
     chunks?: number;
     faceId?: string;
-    
-    // Other
     phase?: string;
     [key: string]: unknown;
   };
@@ -526,6 +461,21 @@ export interface WSVideoRecordingStatusEvent {
   };
 }
 
+export interface WSTranscriptValidatedEvent {
+  event: 'transcript:validated';
+  data: {
+    text: string;
+    phase: AssessmentPhase;
+  };
+}
+
+export interface WSTranscriptRejectedEvent {
+  event: 'transcript:rejected';
+  data: {
+    phase: AssessmentPhase;
+  };
+}
+
 export type WSServerEvent =
   | WSConnectionReadyEvent
   | WSConnectionErrorEvent
@@ -534,12 +484,12 @@ export type WSServerEvent =
   | WSAiSpeakingStartEvent
   | WSAiSpeakingEndEvent
   | WSPhaseChangedEvent
-  | WSQuestionNewEvent
   | WSInterviewEndedEvent
   | WSErrorEvent
   | WSNetworkMetricEvent
   | WSRecordingStatusEvent
-  | WSVideoRecordingStatusEvent;
+  | WSVideoRecordingStatusEvent
+  | WSTranscriptValidatedEvent
+  | WSTranscriptRejectedEvent;
 
-// All WS Events
 export type WSEvent = WSClientEvent | WSServerEvent;

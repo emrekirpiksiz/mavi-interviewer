@@ -3,7 +3,7 @@ import path from 'path';
 import Ffmpeg from 'fluent-ffmpeg';
 import { BlobServiceClient } from '@azure/storage-blob';
 import { config } from '../config/index.js';
-import { updateSessionRecordingStatus } from '../db/queries/sessions.js';
+import { createSessionEvent } from '../db/queries/sessions.js';
 import { connectionManager } from '../websocket/connectionManager.js';
 import type { WSRecordingStatusEvent, RecordingStatus } from '@ai-interview/shared';
 
@@ -62,7 +62,7 @@ export async function initRecording(sessionId: string): Promise<void> {
   writeManifest(recordingDir, manifest);
 
   // DB güncelle
-  await updateSessionRecordingStatus(sessionId, 'recording');
+  await createSessionEvent({ sessionId, eventType: 'session_started', eventData: { recording: 'started' } });
 
   console.log(`[AudioRecording] Init recording for session ${sessionId}`);
 }
@@ -186,7 +186,7 @@ export async function finalizeRecording(sessionId: string): Promise<void> {
 
   try {
     // DB: processing
-    await updateSessionRecordingStatus(sessionId, 'processing');
+    await createSessionEvent({ sessionId, eventType: 'session_started', eventData: { recording: 'processing' } });
     sendRecordingStatus(sessionId, 'processing', 'Ses kaydı işleniyor...');
 
     // 1. ffmpeg ile birleştir + MP3 encode
@@ -198,16 +198,24 @@ export async function finalizeRecording(sessionId: string): Promise<void> {
     const blobUrl = await uploadToAzure(sessionId, mp3Buffer);
 
     // 3. DB: completed + URL
-    await updateSessionRecordingStatus(sessionId, 'completed', blobUrl);
+    await createSessionEvent({ sessionId, eventType: 'session_started', eventData: { recording: 'completed', recordingUrl: blobUrl } });
     sendRecordingStatus(sessionId, 'completed', 'Ses kaydı başarıyla kaydedildi.', undefined, blobUrl);
 
     console.log(`[AudioRecording] Finalized recording for session ${sessionId} → ${blobUrl}`);
+
+    // Notify callback coordinator
+    const { markAudioReady } = await import('./callbackCoordinator.js');
+    markAudioReady(sessionId);
   } catch (error) {
     console.error(`[AudioRecording] Failed to finalize recording for session ${sessionId}:`, error);
-    await updateSessionRecordingStatus(sessionId, 'failed');
+    await createSessionEvent({ sessionId, eventType: 'error_occurred', eventData: { recording: 'failed' } });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     sendRecordingStatus(sessionId, 'failed', 'Ses kaydı işlenirken hata oluştu.', errorMessage);
+
+    // Still notify coordinator so callback isn't stuck
+    const { markAudioReady } = await import('./callbackCoordinator.js');
+    markAudioReady(sessionId);
   } finally {
     // 4. Cleanup
     activeManifests.delete(sessionId);

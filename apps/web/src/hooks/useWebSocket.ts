@@ -16,13 +16,15 @@ import type {
   WSErrorEvent,
   WSNetworkMetricEvent,
   WSRecordingStatusEvent,
+  WSTranscriptValidatedEvent,
+  WSTranscriptRejectedEvent,
 } from '@ai-interview/shared';
 
 // ============================================
 // WEBSOCKET HOOK
 // ============================================
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:3001/ws';
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:2223/ws';
 
 export interface UseWebSocketReturn {
   connect: (sessionId: string) => void;
@@ -45,12 +47,11 @@ export function useWebSocket(): UseWebSocketReturn {
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isIntentionalDisconnectRef = useRef(false);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
 
   // Get store actions
   const {
     setSession,
-    setConfig,
     setWsConnected,
     setPageState,
     setError,
@@ -66,6 +67,7 @@ export function useWebSocket(): UseWebSocketReturn {
     setElapsedSeconds,
     setRecordingStatus,
     setSessionSettings,
+    setCallbackDebug,
     wsConnected,
   } = useInterviewStore();
 
@@ -130,9 +132,17 @@ export function useWebSocket(): UseWebSocketReturn {
         case 'recording:status':
           handleRecordingStatus(message as WSRecordingStatusEvent);
           break;
+        case 'transcript:validated':
+          handleTranscriptValidated(message as WSTranscriptValidatedEvent);
+          break;
+        case 'transcript:rejected':
+          handleTranscriptRejected(message as WSTranscriptRejectedEvent);
+          break;
         case 'video:recording:status':
-          // Video recording status is informational - log it
           console.log('[WebSocket] Video recording status:', (message as { data: unknown }).data);
+          break;
+        case 'callback:debug' as string:
+          handleCallbackDebug(message as unknown as { event: string; data: import('../stores/interviewStore').CallbackDebugInfo });
           break;
         default:
           console.warn('[WebSocket] Unknown event:', (message as WSServerEvent).event);
@@ -152,18 +162,13 @@ export function useWebSocket(): UseWebSocketReturn {
     setSession({
       sessionId: data.sessionId,
       candidateName: data.candidate.name,
-      positionTitle: data.position.title,
-      companyName: data.position.company,
+      assessmentTitle: data.assessment.title,
+      totalQuestions: data.totalQuestions,
       status: data.status,
       currentPhase: data.currentPhase,
       currentQuestionIndex: data.currentQuestionIndex,
     });
 
-    setConfig({
-      phases: data.config.phases,
-    });
-
-    // Set session settings (camera, etc.)
     if (data.settings) {
       setSessionSettings(data.settings);
     }
@@ -171,30 +176,22 @@ export function useWebSocket(): UseWebSocketReturn {
     setWsConnected(true);
     setPhase(data.currentPhase);
     
-    // Handle reconnection scenario
     if (data.isReconnect && data.status === 'active') {
       console.log('[WebSocket] Reconnecting to active session:', data.sessionId);
       
-      // Mark as reconnection in store
       setIsReconnect(true);
       setReconnectStep('ws_connected');
       
-      // Load existing transcript
       if (data.existingTranscript && data.existingTranscript.length > 0) {
         loadExistingTranscript(data.existingTranscript);
         console.log(`[WebSocket] Loaded ${data.existingTranscript.length} existing transcript entries`);
       }
       setReconnectStep('transcript_loaded');
       
-      // Restore elapsed time
       if (data.elapsedSeconds) {
         setElapsedSeconds(data.elapsedSeconds);
       }
       
-      // Transcript yüklendi, ActiveScreen'e geç
-      // Simli avatar'ın DOM ref'lerine (video, audio) ihtiyacı var - bunlar sadece ActiveScreen'de mevcut
-      // Bu yüzden 'active' state'e geçip ActiveScreen'in Simli'yi init etmesini bekliyoruz
-      // interview:resume ise Simli hazır olunca useInterview tarafından gönderilecek
       const currentState = useInterviewStore.getState().pageState;
       if (currentState === 'loading' || currentState === 'reconnecting') {
         setPageState('active');
@@ -202,10 +199,8 @@ export function useWebSocket(): UseWebSocketReturn {
       }
       
     } else {
-      // Not a reconnection
       setIsReconnect(false);
       
-      // Normal connection flow
       const currentState = useInterviewStore.getState().pageState;
       if (currentState === 'loading') {
         setPageState('setup');
@@ -214,7 +209,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
     console.log('[WebSocket] Connection ready for session:', data.sessionId, 
       data.isReconnect ? '(reconnect)' : '(new)');
-  }, [setSession, setConfig, setWsConnected, setPhase, setPageState, setInterviewState, 
+  }, [setSession, setWsConnected, setPhase, setPageState, setInterviewState, 
       loadExistingTranscript, setElapsedSeconds, setSystemMessage, setIsReconnect, setReconnectStep, setSessionSettings]);
 
   /**
@@ -255,12 +250,10 @@ export function useWebSocket(): UseWebSocketReturn {
     setCurrentTurn(message.data.turn);
     console.log('[WebSocket] Turn set to:', message.data.turn);
     
-    // Add AI message to transcript (with reasoning for demo mode)
     addTranscriptEntry({
       speaker: 'ai',
       content: message.data.text,
       phase: message.data.phase,
-      reasoning: message.data.reasoning,
     });
   }, [setInterviewState, addTranscriptEntry, setSystemMessage, setCurrentTurn]);
 
@@ -284,12 +277,13 @@ export function useWebSocket(): UseWebSocketReturn {
 
   /**
    * Handle interview:ended event
+   * Transition to 'closing' state first - audio may still be playing.
+   * ActiveScreen will transition to 'completed' after audio finishes.
    */
   const handleInterviewEnded = useCallback((message: WSInterviewEndedEvent) => {
     console.log('[WebSocket] Interview ended:', message.data.reason);
-    setPageState('completed');
-    setInterviewState('idle');
-  }, [setPageState, setInterviewState]);
+    setPageState('closing');
+  }, [setPageState]);
 
   /**
    * Handle error event
@@ -327,6 +321,38 @@ export function useWebSocket(): UseWebSocketReturn {
     console.log(`[WebSocket] Recording status: ${status} - ${msg}`, error ? `Error: ${error}` : '');
     setRecordingStatus(status, msg, error);
   }, [setRecordingStatus]);
+
+  /**
+   * Handle transcript:validated event - backend confirmed the transcript is meaningful
+   */
+  const handleTranscriptValidated = useCallback((message: WSTranscriptValidatedEvent) => {
+    console.log('[WebSocket] Transcript validated:', message.data.text.substring(0, 60));
+    addTranscriptEntry({
+      speaker: 'candidate',
+      content: message.data.text,
+      phase: message.data.phase,
+    });
+  }, [addTranscriptEntry]);
+
+  /**
+   * Handle transcript:rejected event - backend determined STT output was nonsensical
+   */
+  const handleTranscriptRejected = useCallback((message: WSTranscriptRejectedEvent) => {
+    console.log('[WebSocket] Transcript rejected');
+    addTranscriptEntry({
+      speaker: 'candidate',
+      content: '(Anlamsız cevap)',
+      phase: message.data.phase,
+    });
+  }, [addTranscriptEntry]);
+
+  /**
+   * Handle callback:debug event
+   */
+  const handleCallbackDebug = useCallback((message: { event: string; data: import('../stores/interviewStore').CallbackDebugInfo }) => {
+    console.log('[WebSocket] Callback debug:', message.data.success ? 'SUCCESS' : 'FAILED');
+    setCallbackDebug(message.data);
+  }, [setCallbackDebug]);
 
   /**
    * Attempt to reconnect with exponential backoff

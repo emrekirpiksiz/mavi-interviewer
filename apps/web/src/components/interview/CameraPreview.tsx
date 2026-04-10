@@ -116,7 +116,7 @@ function FaceDetectionDebugOverlay({ data }: { data: FaceDetectionDebugData }) {
   const yawOk = data.headYaw !== null && Math.abs(data.headYaw) <= 0.5;
 
   return (
-    <div className="absolute top-0 left-0 right-0 bg-black/75 backdrop-blur-sm text-[10px] font-mono text-white/90 p-2 space-y-1">
+    <div className="hidden lg:block absolute top-0 left-0 right-0 bg-black/75 backdrop-blur-sm text-[10px] font-mono text-white/90 p-2 space-y-1">
       {/* Row 1: state + FPS */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

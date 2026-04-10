@@ -5,75 +5,46 @@ import type { Request, Response, NextFunction } from 'express';
 // ZOD VALIDATION SCHEMAS
 // ============================================
 
-// ---------- Common Schemas ----------
+// ---------- Assessment Schema ----------
 
-const companySchema = z.object({
-  name: z.string().min(1, 'Şirket adı gerekli'),
-  industry: z.string().optional(),
-  size: z.string().optional(),
-  tech_stack: z.array(z.string()).optional(),
+const assessmentSchema = z.object({
+  title: z.string().min(1, 'Değerlendirme başlığı gerekli'),
+  introText: z.string().min(1, 'Giriş metni gerekli'),
+  closingText: z.string().min(1, 'Kapanış metni gerekli'),
 });
 
-const positionSchema = z.object({
-  company: companySchema,
-  title: z.string().min(1, 'Pozisyon başlığı gerekli'),
-  responsibilities: z.array(z.string()).min(1, 'En az bir sorumluluk gerekli'),
-  requirements: z.array(z.string()).min(1, 'En az bir gereksinim gerekli'),
-});
-
-const experienceSchema = z.object({
-  title: z.string().min(1),
-  company: z.string().min(1),
-  duration: z.string().min(1),
-  description: z.string().optional(),
-});
-
-const educationSchema = z.object({
-  degree: z.string().min(1),
-  school: z.string().min(1),
-  duration: z.string().min(1),
-  gpa: z.string().optional(),
+const questionSchema = z.object({
+  id: z.string().min(1, 'Soru ID gerekli'),
+  order: z.number().int().min(1, 'Sıra numarası 1 veya üzeri olmalı'),
+  text: z.string().min(1, 'Soru metni gerekli'),
+  category: z.string().min(1, 'Kategori gerekli'),
+  correctOnWrong: z.boolean(),
+  correctAnswer: z.string().min(1, 'Doğru cevap gerekli'),
 });
 
 const candidateSchema = z.object({
   name: z.string().min(1, 'Aday adı gerekli'),
-  experiences: z.array(experienceSchema).optional(),
-  education: z.array(educationSchema).optional(),
-  skills: z.array(z.string()).optional(),
+  email: z.string().email().optional(),
+  personnelCode: z.string().optional(),
+  position: z.string().optional(),
+  store: z.string().optional(),
 });
 
-const topicScoringSchema = z.object({
-  scale: z.string(),
-  minimum_expected: z.number(),
-  importance: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
-});
-
-const interviewTopicSchema = z.object({
-  category: z.enum(['technical', 'behavioral', 'experience', 'motivation', 'soft_skills']),
-  topic: z.string().min(1, 'Konu başlığı gerekli'),
-  description: z.string().optional(),
-  scoring: topicScoringSchema.optional(),
-  evaluation_guide: z.string().optional(),
-});
-
-// ---------- Settings Schema ----------
-
-const cameraSettingsSchema = z.object({
-  enabled: z.boolean(),
-  recordVideo: z.boolean().optional(),
-});
-
-const sessionSettingsSchema = z.object({
-  camera: cameraSettingsSchema.optional(),
+const settingsSchema = z.object({
+  cameraMonitoring: z.boolean().optional(),
+  maxDurationMinutes: z.number().int().min(1).max(120).optional(),
+  language: z.string().optional(),
 });
 
 // ---------- Request Schemas ----------
 
 export const createSessionSchema = z.object({
-  position: positionSchema,
-  interview_topics: z.array(interviewTopicSchema).min(1, 'En az bir görüşme konusu gerekli'),
+  assessment: assessmentSchema,
+  questions: z.array(questionSchema).min(1, 'En az bir soru gerekli'),
   candidate: candidateSchema,
-  settings: sessionSettingsSchema.optional(),
+  settings: settingsSchema.optional(),
+  externalId: z.string().optional(),
+  callbackUrl: z.string().url('Geçerli bir URL gerekli').optional(),
 });
 
 export const sessionIdParamSchema = z.object({
@@ -87,9 +58,6 @@ export type SessionIdParams = z.infer<typeof sessionIdParamSchema>;
 
 // ---------- Validation Middleware ----------
 
-/**
- * Generic validation middleware factory
- */
 export function validate<T extends z.ZodSchema>(
   schema: T,
   source: 'body' | 'params' | 'query' = 'body'
@@ -116,23 +84,14 @@ export function validate<T extends z.ZodSchema>(
   };
 }
 
-/**
- * Validate request body
- */
 export function validateBody<T extends z.ZodSchema>(schema: T) {
   return validate(schema, 'body');
 }
 
-/**
- * Validate request params
- */
 export function validateParams<T extends z.ZodSchema>(schema: T) {
   return validate(schema, 'params');
 }
 
-/**
- * Validate request query
- */
 export function validateQuery<T extends z.ZodSchema>(schema: T) {
   return validate(schema, 'query');
 }

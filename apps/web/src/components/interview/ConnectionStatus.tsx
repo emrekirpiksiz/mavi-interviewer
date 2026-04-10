@@ -85,24 +85,23 @@ export function ConnectionStatus() {
   };
 
   return (
-    <div className="flex items-center gap-4 px-4 py-2 bg-[var(--bg-tertiary)] rounded-lg text-sm">
+    <div className="flex items-center gap-3 sm:gap-4 px-3 sm:px-4 py-1.5 sm:py-2 bg-[var(--bg-tertiary)] rounded-lg text-xs sm:text-sm">
       {/* WebSocket Status */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         {wsConnected ? (
-          <Wifi className="w-4 h-4 text-[var(--success)]" />
+          <Wifi className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[var(--success)]" />
         ) : (
-          <WifiOff className="w-4 h-4 text-[var(--error)]" />
+          <WifiOff className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[var(--error)]" />
         )}
         <span className="text-[var(--text-secondary)]">
           {wsConnected ? 'Bağlı' : 'Bağlantı Yok'}
         </span>
       </div>
 
-      {/* Divider */}
-      <div className="w-px h-4 bg-[var(--border-default)]" />
+      <div className="w-px h-3.5 bg-[var(--border-default)]" />
 
       {/* Signal Quality */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2">
         {getSignalIcon()}
         <span className="text-[var(--text-secondary)]">
           {getQualityText()}
@@ -112,12 +111,12 @@ export function ConnectionStatus() {
       {/* Ping Latency */}
       {pingLatency !== null && (
         <>
-          <div className="w-px h-4 bg-[var(--border-default)]" />
-          <div className="flex items-center gap-2">
+          <div className="w-px h-3.5 bg-[var(--border-default)]" />
+          <div className="flex items-center gap-1.5">
             <span className={getLatencyColor()}>
               {pingLatency}ms
             </span>
-            <span className="text-[var(--text-muted)] text-xs">
+            <span className="text-[var(--text-muted)] text-xs hidden sm:inline">
               ({formatLastPing()})
             </span>
           </div>

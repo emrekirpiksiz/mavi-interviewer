@@ -14,7 +14,7 @@ import { TakenOverScreen } from '@/components/interview/TakenOverScreen';
 import { UnsupportedBrowserScreen } from '@/components/interview/UnsupportedBrowserScreen';
 import { checkBrowserCompatibility, type BrowserCheckResult } from '@/lib/browserCheck';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
 
 export default function InterviewPage() {
   const params = useParams();
@@ -36,9 +36,20 @@ export default function InterviewPage() {
   const error = useInterviewStore((state) => state.error);
   const reset = useInterviewStore((state) => state.reset);
   const setPageState = useInterviewStore((state) => state.setPageState);
+  const setSession = useInterviewStore((state) => state.setSession);
+
+  // Track whether the session was ever active in this page lifecycle
+  const wasActiveRef = useRef(false);
 
   // Interview hook
   const interview = useInterview({ videoRef, audioRef });
+
+  // Track active state
+  useEffect(() => {
+    if (pageState === 'active' || pageState === 'closing') {
+      wasActiveRef.current = true;
+    }
+  }, [pageState]);
 
   // Connect on mount - check session status first for reconnect detection
   useEffect(() => {
@@ -57,7 +68,6 @@ export default function InterviewPage() {
             useInterviewStore.getState().setError('Görüşme bulunamadı');
             return;
           }
-          // Other errors - proceed with normal flow
           interview.connect(sessionId);
           return;
         }
@@ -66,23 +76,29 @@ export default function InterviewPage() {
         const status = data?.data?.status;
 
         if (status === 'active') {
-          // Aktif session algılandı - reconnect akışı başlat
           console.log('[InterviewPage] Active session detected, starting reconnect flow');
           setPageState('reconnecting');
           interview.connect(sessionId);
         } else if (status === 'completed') {
-          // Tamamlanmış session
+          // Load session info from API response for CompletedScreen
+          setSession({
+            sessionId,
+            candidateName: data?.data?.candidate?.name || '',
+            assessmentTitle: data?.data?.assessment?.title || '',
+            totalQuestions: 0,
+            status: 'completed',
+            currentPhase: 'closing',
+            currentQuestionIndex: 0,
+          });
           setPageState('completed');
         } else if (status === 'failed') {
           setPageState('error');
           useInterviewStore.getState().setError('Bu görüşme başarısız olarak sonlandırılmış');
         } else {
-          // pending - normal akış
           interview.connect(sessionId);
         }
       } catch (err) {
         console.error('[InterviewPage] Error checking session:', err);
-        // Hata durumunda normal akış ile devam et
         interview.connect(sessionId);
       }
     }
@@ -123,8 +139,16 @@ export default function InterviewPage() {
           />
         );
       
-      case 'active':
       case 'completed':
+        // Direct visit to a completed session -> show standalone CompletedScreen
+        // Session that just finished (was active) -> show ActiveScreen with results overlay
+        if (!wasActiveRef.current) {
+          return <CompletedScreen />;
+        }
+        // fall through to ActiveScreen
+      // eslint-disable-next-line no-fallthrough
+      case 'active':
+      case 'closing':
         return (
           <ActiveScreen
             videoRef={videoRef}
@@ -138,8 +162,10 @@ export default function InterviewPage() {
             isAudioPlaying={interview.isAudioPlaying}
             onSimliInit={interview.initializeSimli}
             onStartInterview={interview.startInterview}
+            isClosing={pageState === 'closing'}
             isCompleted={pageState === 'completed'}
             onCloseSimli={interview.closeSimli}
+            onCleanupMedia={interview.cleanupMedia}
             onResumeAfterReconnect={interview.resumeAfterReconnect}
             cameraStream={interview.cameraStream}
             cameraVideoRef={interview.cameraVideoRef}
@@ -168,7 +194,7 @@ export default function InterviewPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--bg-primary)]">
+    <main className="min-h-screen bg-[var(--bg-primary)] overflow-x-hidden">
       {renderContent()}
     </main>
   );

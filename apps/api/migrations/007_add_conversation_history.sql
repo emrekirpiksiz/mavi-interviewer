@@ -1,30 +1,15 @@
--- Migration: Add conversation history and state persistence columns
--- Date: 2026-01-25
--- Purpose: Enable session persistence for reconnection scenarios
+-- Migration: 007_add_conversation_history
+-- Description: Add conversation history and state persistence fields to sessions
 
--- Add conversation history column for Claude context
-ALTER TABLE sessions 
-ADD COLUMN IF NOT EXISTS conversation_history JSONB DEFAULT '[]'::jsonb;
-
--- Add last AI message for quick reference
 ALTER TABLE sessions
-ADD COLUMN IF NOT EXISTS last_ai_message TEXT;
+    ADD COLUMN conversation_history JSONB DEFAULT '[]',
+    ADD COLUMN last_ai_message TEXT,
+    ADD COLUMN phase_question_counts JSONB DEFAULT '{}',
+    ADD COLUMN interview_state VARCHAR(50);
 
--- Add phase question counts for tracking
-ALTER TABLE sessions
-ADD COLUMN IF NOT EXISTS phase_question_counts JSONB DEFAULT '{}'::jsonb;
+COMMENT ON COLUMN sessions.conversation_history IS 'LLM conversation history for context continuity';
+COMMENT ON COLUMN sessions.last_ai_message IS 'Last AI message for reconnection recovery';
+COMMENT ON COLUMN sessions.phase_question_counts IS 'Question counts per phase';
+COMMENT ON COLUMN sessions.interview_state IS 'State machine state for reconnection';
 
--- Add interview state for reconnection
-ALTER TABLE sessions
-ADD COLUMN IF NOT EXISTS interview_state VARCHAR(50) DEFAULT 'IDLE';
-
--- Create index for active sessions lookup
-CREATE INDEX IF NOT EXISTS idx_sessions_status_active 
-ON sessions(status) 
-WHERE status = 'active' AND deleted_at IS NULL;
-
--- Comment on columns
-COMMENT ON COLUMN sessions.conversation_history IS 'Array of {role, content} messages for Claude context';
-COMMENT ON COLUMN sessions.last_ai_message IS 'Last AI message for quick reference during reconnection';
-COMMENT ON COLUMN sessions.phase_question_counts IS 'Object mapping phase names to question counts';
-COMMENT ON COLUMN sessions.interview_state IS 'Current state machine state (IDLE, READY, AI_SPEAKING, etc.)';
+CREATE INDEX idx_sessions_active ON sessions(id) WHERE status = 'active' AND deleted_at IS NULL;

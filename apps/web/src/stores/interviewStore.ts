@@ -1,44 +1,44 @@
 import { create } from 'zustand';
 import type {
   SessionStatus,
-  InterviewPhase,
+  AssessmentPhase,
   SpeakerType,
   NetworkMetric,
   RecordingStatus,
-  SessionSettings,
+  AssessmentSettings,
   VideoRecordingStatus,
 } from '@ai-interview/shared';
 
 // ============================================
-// INTERVIEW STORE - ZUSTAND
+// ASSESSMENT STORE - ZUSTAND
 // ============================================
 
 // ---------- TYPES ----------
 
-export type PageState = 'loading' | 'setup' | 'ready' | 'active' | 'reconnecting' | 'taken_over' | 'completed' | 'error';
+export type PageState = 'loading' | 'setup' | 'ready' | 'active' | 'reconnecting' | 'taken_over' | 'closing' | 'completed' | 'error';
 export type ReconnectStep = 'connecting' | 'ws_connected' | 'transcript_loaded' | 'avatar_initializing' | 'resuming' | 'done';
 export type MicPermission = 'pending' | 'granted' | 'denied';
 export type CameraPermission = 'pending' | 'granted' | 'denied';
 export type CameraWarningType = 'face_lost' | 'gaze_away' | 'multi_face' | null;
 export type InterviewState = 
   | 'idle' 
-  | 'ai_generating'      // AI düşünüyor
+  | 'ai_generating'
   | 'ai_speaking' 
   | 'waiting_candidate' 
   | 'candidate_speaking'
-  | 'processing';        // Yanıt işleniyor
+  | 'processing';
 export type ConnectionQuality = 'checking' | 'excellent' | 'good' | 'poor' | 'offline';
 export type AudioOutputStatus = 'checking' | 'available' | 'unavailable';
-export type InterviewMode = 'avatar' | 'realtime'; // V1: Avatar (Simli), V2: Realtime (OpenAI)
-export type InterviewTurn = 'ai' | 'candidate'; // Sıra kimde?
+export type InterviewMode = 'avatar' | 'realtime';
+export type InterviewTurn = 'ai' | 'candidate';
 
 export interface SessionData {
   sessionId: string;
   candidateName: string;
-  positionTitle: string;
-  companyName: string;
+  assessmentTitle: string;
+  totalQuestions: number;
   status: SessionStatus;
-  currentPhase: InterviewPhase;
+  currentPhase: AssessmentPhase;
   currentQuestionIndex: number;
 }
 
@@ -47,12 +47,16 @@ export interface TranscriptEntry {
   speaker: SpeakerType;
   content: string;
   timestamp: number;
-  phase: InterviewPhase;
-  reasoning?: string | null; // AI'ın neden bu soruyu sorduğunun kısa açıklaması (sadece AI mesajları için)
+  phase: AssessmentPhase;
 }
 
-export interface ConnectionConfig {
-  phases: InterviewPhase[];
+export interface CallbackDebugInfo {
+  requestPayload: unknown;
+  responseStatus: number | null;
+  responseBody: unknown;
+  success: boolean;
+  error?: string;
+  durationMs: number;
 }
 
 // ---------- STORE INTERFACE ----------
@@ -60,7 +64,6 @@ export interface ConnectionConfig {
 interface InterviewStore {
   // ===== SESSION =====
   session: SessionData | null;
-  config: ConnectionConfig | null;
 
   // ===== PAGE STATE =====
   pageState: PageState;
@@ -74,16 +77,16 @@ interface InterviewStore {
   // ===== KVKK & NETWORK =====
   kvkkAccepted: boolean;
   connectionQuality: ConnectionQuality;
-  bandwidth: number | null; // Mbps
+  bandwidth: number | null;
   audioOutputStatus: AudioOutputStatus;
 
   // ===== INTERVIEW MODE =====
-  interviewMode: InterviewMode; // V1: Avatar, V2: Realtime
+  interviewMode: InterviewMode;
 
   // ===== INTERVIEW STATE =====
   interviewState: InterviewState;
-  currentPhase: InterviewPhase;
-  currentTurn: InterviewTurn; // Sıra kimde? 'ai' veya 'candidate'
+  currentPhase: AssessmentPhase;
+  currentTurn: InterviewTurn;
   isReconnect: boolean;
   reconnectStep: ReconnectStep;
 
@@ -108,147 +111,129 @@ interface InterviewStore {
   recordingError: string | null;
 
   // ===== CAMERA =====
-  sessionSettings: SessionSettings | null;
+  sessionSettings: AssessmentSettings | null;
   cameraEnabled: boolean;
   cameraPermission: CameraPermission;
   faceDetected: boolean;
   gazeOnCamera: boolean;
   cameraWarning: CameraWarningType;
   videoRecordingStatus: VideoRecordingStatus | null;
+  videoChunksUploaded: number;
+
+  // ===== CALLBACK DEBUG =====
+  callbackDebug: CallbackDebugInfo | null;
 
   // ===== ACTIONS =====
-  // Session
   setSession: (session: SessionData) => void;
-  setConfig: (config: ConnectionConfig) => void;
   updateSession: (updates: Partial<SessionData>) => void;
 
-  // Page State
   setPageState: (state: PageState) => void;
   setError: (error: string | null) => void;
 
-  // Setup Checks
   setMicPermission: (status: MicPermission) => void;
   setWsConnected: (connected: boolean) => void;
   setSimliReady: (ready: boolean) => void;
   
-  // KVKK & Network
   setKvkkAccepted: (accepted: boolean) => void;
   setConnectionQuality: (quality: ConnectionQuality) => void;
   setBandwidth: (bandwidth: number | null) => void;
   setAudioOutputStatus: (status: AudioOutputStatus) => void;
 
-  // Interview Mode
   setInterviewMode: (mode: InterviewMode) => void;
 
-  // Interview State
   setInterviewState: (state: InterviewState) => void;
-  setPhase: (phase: InterviewPhase) => void;
+  setPhase: (phase: AssessmentPhase) => void;
   setCurrentTurn: (turn: InterviewTurn) => void;
   setIsReconnect: (isReconnect: boolean) => void;
   setReconnectStep: (step: ReconnectStep) => void;
 
-  // Transcript
   addTranscriptEntry: (entry: Omit<TranscriptEntry, 'id' | 'timestamp'>) => void;
   setPartialTranscript: (text: string) => void;
   clearPartialTranscript: () => void;
 
-  // System Message
   setSystemMessage: (message: string | null) => void;
 
-  // Timer
   tick: () => void;
   resetTimer: () => void;
 
-  // Network Metrics
   addNetworkMetric: (metric: NetworkMetric) => void;
   clearNetworkMetrics: () => void;
   setPingLatency: (latency: number | null) => void;
 
-  // Recording Status
   setRecordingStatus: (status: RecordingStatus, message: string, error?: string) => void;
 
-  // Camera
-  setSessionSettings: (settings: SessionSettings | null) => void;
+  setSessionSettings: (settings: AssessmentSettings | null) => void;
   setCameraEnabled: (enabled: boolean) => void;
   setCameraPermission: (permission: CameraPermission) => void;
   setFaceDetected: (detected: boolean) => void;
   setGazeOnCamera: (onCamera: boolean) => void;
   setCameraWarning: (warning: CameraWarningType) => void;
   setVideoRecordingStatus: (status: VideoRecordingStatus | null) => void;
+  setVideoChunksUploaded: (count: number) => void;
 
-  // Load Existing Data (for reconnect)
+  setCallbackDebug: (debug: CallbackDebugInfo) => void;
+
   loadExistingTranscript: (entries: Array<{
     speaker: SpeakerType;
     content: string;
-    phase: InterviewPhase;
+    phase: AssessmentPhase;
     timestamp: number;
   }>) => void;
   setElapsedSeconds: (seconds: number) => void;
 
-  // Full Reset
   reset: () => void;
 }
 
 // ---------- INITIAL STATE ----------
 
 const initialState = {
-  // Session
   session: null,
-  config: null,
 
-  // Page State
   pageState: 'loading' as PageState,
   error: null,
 
-  // Setup Checks
   micPermission: 'pending' as MicPermission,
   wsConnected: false,
   simliReady: false,
   
-  // KVKK & Network
   kvkkAccepted: false,
   connectionQuality: 'checking' as ConnectionQuality,
   bandwidth: null,
   audioOutputStatus: 'checking' as AudioOutputStatus,
 
-  // Interview Mode
-  interviewMode: 'avatar' as InterviewMode, // Default: Avatar mode
+  interviewMode: 'avatar' as InterviewMode,
 
-  // Interview State
   interviewState: 'idle' as InterviewState,
-  currentPhase: 'introduction' as InterviewPhase,
-  currentTurn: 'ai' as InterviewTurn, // Başlangıçta sıra AI'da
+  currentPhase: 'introduction' as AssessmentPhase,
+  currentTurn: 'ai' as InterviewTurn,
   isReconnect: false,
   reconnectStep: 'connecting' as ReconnectStep,
 
-  // Transcript
   transcriptEntries: [],
   partialTranscript: '',
 
-  // System Message
   systemMessage: null,
 
-  // Timer
   elapsedSeconds: 0,
 
-  // Network Metrics
   networkMetrics: [] as NetworkMetric[],
   pingLatency: null,
   lastPingTime: null,
 
-  // Recording Status
   recordingStatus: null as RecordingStatus | null,
   recordingMessage: null as string | null,
   recordingError: null as string | null,
 
-  // Camera
-  sessionSettings: null as SessionSettings | null,
+  sessionSettings: null as AssessmentSettings | null,
   cameraEnabled: false,
   cameraPermission: 'pending' as CameraPermission,
   faceDetected: true,
   gazeOnCamera: true,
   cameraWarning: null as CameraWarningType,
   videoRecordingStatus: null as VideoRecordingStatus | null,
+  videoChunksUploaded: 0,
+
+  callbackDebug: null as CallbackDebugInfo | null,
 };
 
 // ---------- STORE CREATION ----------
@@ -256,81 +241,46 @@ const initialState = {
 export const useInterviewStore = create<InterviewStore>((set, get) => ({
   ...initialState,
 
-  // ===== SESSION ACTIONS =====
-
   setSession: (session) => set({ session }),
-
-  setConfig: (config) => set({ config }),
 
   updateSession: (updates) => set((state) => ({
     session: state.session ? { ...state.session, ...updates } : null,
   })),
 
-  // ===== PAGE STATE ACTIONS =====
-
   setPageState: (pageState) => set({ pageState }),
 
   setError: (error) => set({ error, pageState: error ? 'error' : get().pageState }),
 
-  // ===== SETUP CHECKS ACTIONS =====
-
   setMicPermission: (micPermission) => {
     set({ micPermission });
-    
-    // Auto-transition to ready if all checks pass
     const state = get();
-    if (
-      state.pageState === 'setup' &&
-      micPermission === 'granted' &&
-      state.wsConnected
-    ) {
+    if (state.pageState === 'setup' && micPermission === 'granted' && state.wsConnected) {
       set({ pageState: 'ready' });
     }
   },
 
   setWsConnected: (wsConnected) => {
     set({ wsConnected });
-    
-    // Auto-transition to ready if all checks pass (only for non-reconnect flows)
     const state = get();
-    if (
-      state.pageState === 'setup' &&
-      state.micPermission === 'granted' &&
-      wsConnected
-    ) {
+    if (state.pageState === 'setup' && state.micPermission === 'granted' && wsConnected) {
       set({ pageState: 'ready' });
     }
   },
 
   setSimliReady: (simliReady) => set({ simliReady }),
 
-  // ===== KVKK & NETWORK ACTIONS =====
-
   setKvkkAccepted: (kvkkAccepted) => set({ kvkkAccepted }),
-
   setConnectionQuality: (connectionQuality) => set({ connectionQuality }),
-
   setBandwidth: (bandwidth) => set({ bandwidth }),
-
   setAudioOutputStatus: (audioOutputStatus) => set({ audioOutputStatus }),
-
-  // ===== INTERVIEW MODE ACTIONS =====
 
   setInterviewMode: (interviewMode) => set({ interviewMode }),
 
-  // ===== INTERVIEW STATE ACTIONS =====
-
   setInterviewState: (interviewState) => set({ interviewState }),
-
   setPhase: (currentPhase) => set({ currentPhase }),
-
   setCurrentTurn: (currentTurn) => set({ currentTurn }),
-
   setIsReconnect: (isReconnect) => set({ isReconnect }),
-
   setReconnectStep: (reconnectStep) => set({ reconnectStep }),
-
-  // ===== TRANSCRIPT ACTIONS =====
 
   addTranscriptEntry: (entry) => set((state) => ({
     transcriptEntries: [
@@ -344,35 +294,21 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
   })),
 
   setPartialTranscript: (partialTranscript) => set({ partialTranscript }),
-
   clearPartialTranscript: () => set({ partialTranscript: '' }),
-
-  // ===== SYSTEM MESSAGE ACTIONS =====
 
   setSystemMessage: (systemMessage) => set({ systemMessage }),
 
-  // ===== TIMER ACTIONS =====
-
-  tick: () => set((state) => ({
-    elapsedSeconds: state.elapsedSeconds + 1,
-  })),
-
+  tick: () => set((state) => ({ elapsedSeconds: state.elapsedSeconds + 1 })),
   resetTimer: () => set({ elapsedSeconds: 0 }),
-
-  // ===== NETWORK METRICS ACTIONS =====
 
   addNetworkMetric: (metric) => set((state) => ({
     networkMetrics: [...state.networkMetrics, metric],
   })),
-
   clearNetworkMetrics: () => set({ networkMetrics: [] }),
-
   setPingLatency: (pingLatency) => set({ 
     pingLatency, 
     lastPingTime: pingLatency !== null ? Date.now() : null 
   }),
-
-  // ===== RECORDING STATUS ACTIONS =====
 
   setRecordingStatus: (recordingStatus, recordingMessage, recordingError) => set({
     recordingStatus,
@@ -380,26 +316,20 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
     recordingError: recordingError ?? null,
   }),
 
-  // ===== CAMERA ACTIONS =====
-
   setSessionSettings: (sessionSettings) => {
-    const cameraEnabled = sessionSettings?.camera?.enabled ?? false;
+    const cameraEnabled = sessionSettings?.cameraMonitoring ?? false;
     set({ sessionSettings, cameraEnabled });
   },
 
   setCameraEnabled: (cameraEnabled) => set({ cameraEnabled }),
-
   setCameraPermission: (cameraPermission) => set({ cameraPermission }),
-
   setFaceDetected: (faceDetected) => set({ faceDetected }),
-
   setGazeOnCamera: (gazeOnCamera) => set({ gazeOnCamera }),
-
   setCameraWarning: (cameraWarning) => set({ cameraWarning }),
-
   setVideoRecordingStatus: (videoRecordingStatus) => set({ videoRecordingStatus }),
+  setVideoChunksUploaded: (videoChunksUploaded) => set({ videoChunksUploaded }),
 
-  // ===== LOAD EXISTING DATA (RECONNECT) =====
+  setCallbackDebug: (callbackDebug) => set({ callbackDebug }),
 
   loadExistingTranscript: (entries) => set({
     transcriptEntries: entries.map((entry, index) => ({
@@ -413,12 +343,10 @@ export const useInterviewStore = create<InterviewStore>((set, get) => ({
 
   setElapsedSeconds: (elapsedSeconds) => set({ elapsedSeconds }),
 
-  // ===== FULL RESET =====
-
   reset: () => set(initialState),
 }));
 
-// ---------- SELECTORS (Convenience) ----------
+// ---------- SELECTORS ----------
 
 export const selectSession = (state: InterviewStore) => state.session;
 export const selectPageState = (state: InterviewStore) => state.pageState;

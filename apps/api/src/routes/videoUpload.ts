@@ -3,27 +3,78 @@ import type { Router as RouterType } from 'express';
 import multer from 'multer';
 import { sessionIdParamSchema, validateParams } from '../middleware/validation.js';
 import { getSessionById } from '../db/queries/sessions.js';
-import { processVideoUpload } from '../services/videoRecordingService.js';
+import { stageVideoChunk, commitVideoUpload } from '../services/videoRecordingService.js';
 import { REST_ERROR_CODES } from '@ai-interview/shared';
 
 // ============================================
-// VIDEO UPLOAD ENDPOINT
+// VIDEO UPLOAD ENDPOINTS — CHUNKED
 // ============================================
+// Two-phase upload: stage individual chunks during the interview,
+// then commit all blocks at the end.
 
 const router: RouterType = Router();
 
-const upload = multer({
+const chunkUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 500 * 1024 * 1024, // 500MB max (video can be large)
+    fileSize: 10 * 1024 * 1024, // 10MB per chunk (5s @ 1Mbps ≈ 625KB, generous headroom)
   },
 });
 
-// POST /sessions/:sessionId/video
+// ---------- POST /sessions/:sessionId/video/chunk?seq=N ----------
+
 router.post(
-  '/:sessionId/video',
+  '/:sessionId/video/chunk',
   validateParams(sessionIdParamSchema),
-  upload.single('video'),
+  chunkUpload.single('chunk'),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { sessionId } = req.params as unknown as { sessionId: string };
+      const seq = parseInt(req.query['seq'] as string, 10);
+
+      if (isNaN(seq) || seq < 0) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_SEQ', message: 'seq query parameter is required and must be a non-negative integer' },
+        });
+        return;
+      }
+
+      const session = await getSessionById(sessionId);
+      if (!session) {
+        res.status(404).json({
+          success: false,
+          error: { code: REST_ERROR_CODES.SESSION_NOT_FOUND, message: 'Görüşme bulunamadı' },
+        });
+        return;
+      }
+
+      if (!req.file) {
+        res.status(400).json({
+          success: false,
+          error: { code: 'MISSING_CHUNK', message: 'Video chunk verisi gerekli' },
+        });
+        return;
+      }
+
+      await stageVideoChunk(sessionId, seq, req.file.buffer);
+
+      res.status(202).json({
+        success: true,
+        data: { sessionId, seq, size: req.file.buffer.length },
+      });
+    } catch (error) {
+      console.error('Error staging video chunk:', error);
+      next(error);
+    }
+  }
+);
+
+// ---------- POST /sessions/:sessionId/video/commit ----------
+
+router.post(
+  '/:sessionId/video/commit',
+  validateParams(sessionIdParamSchema),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { sessionId } = req.params as unknown as { sessionId: string };
@@ -32,39 +83,19 @@ router.post(
       if (!session) {
         res.status(404).json({
           success: false,
-          error: {
-            code: REST_ERROR_CODES.SESSION_NOT_FOUND,
-            message: 'Görüşme bulunamadı',
-          },
+          error: { code: REST_ERROR_CODES.SESSION_NOT_FOUND, message: 'Görüşme bulunamadı' },
         });
         return;
       }
 
-      if (!req.file) {
-        res.status(400).json({
-          success: false,
-          error: {
-            code: 'MISSING_VIDEO',
-            message: 'Video dosyası gerekli',
-          },
-        });
-        return;
-      }
+      const videoUrl = await commitVideoUpload(sessionId);
 
-      // Upload asynchronously, return immediately
-      processVideoUpload(sessionId, req.file.buffer).catch((err) => {
-        console.error(`[VideoUpload] Background processing failed for ${sessionId}:`, err);
-      });
-
-      res.status(202).json({
+      res.status(200).json({
         success: true,
-        data: {
-          message: 'Video kaydı yükleme başlatıldı',
-          sessionId,
-        },
+        data: { sessionId, videoUrl },
       });
     } catch (error) {
-      console.error('Error uploading video:', error);
+      console.error('Error committing video:', error);
       next(error);
     }
   }

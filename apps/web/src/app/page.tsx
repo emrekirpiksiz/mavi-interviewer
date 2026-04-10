@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Monitor, Chrome } from 'lucide-react';
 import { checkBrowserCompatibility, getBrowserWarningMessage, type BrowserCheckResult } from '@/lib/browserCheck';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
 
 export default function HomePage() {
   const router = useRouter();

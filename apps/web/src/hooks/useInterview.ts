@@ -58,6 +58,9 @@ export interface UseInterviewReturn {
   cameraVideoRef: React.RefObject<HTMLVideoElement | null>;
   faceDetectionDebugData: FaceDetectionDebugData;
   
+  // Media cleanup (for AI-initiated closing)
+  cleanupMedia: () => void;
+  
   // Reconnect
   resumeAfterReconnect: () => void;
 }
@@ -102,7 +105,6 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
   const setMicPermission = useInterviewStore((state) => state.setMicPermission);
   const setInterviewState = useInterviewStore((state) => state.setInterviewState);
   const setPartialTranscript = useInterviewStore((state) => state.setPartialTranscript);
-  const addTranscriptEntry = useInterviewStore((state) => state.addTranscriptEntry);
   const currentPhase = useInterviewStore((state) => state.currentPhase);
   const setSystemMessage = useInterviewStore((state) => state.setSystemMessage);
   const setPageState = useInterviewStore((state) => state.setPageState);
@@ -163,7 +165,7 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
   const {
     startRecording: startVideoRecording,
     stopRecording: stopVideoRecording,
-    uploadVideo,
+    feedAiAudio,
   } = useVideoRecording();
 
   const requestCameraPermission = useCallback(async (): Promise<boolean> => {
@@ -172,13 +174,14 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
     return granted;
   }, [requestCameraPermissionRaw, setCameraPermission]);
 
-  // Start camera stream + video recording when interview goes active
+  // Start camera stream + video recording (with audio) when interview goes active
   useEffect(() => {
     if (pageState === 'active' && cameraEnabled && cameraStream === null) {
       const initCamera = async () => {
         const stream = await startCamera();
-        if (stream) {
-          startVideoRecording(stream);
+        const sessionId = useInterviewStore.getState().session?.sessionId;
+        if (stream && sessionId) {
+          await startVideoRecording(stream, sessionId);
           setVideoRecordingStatus('recording');
         }
       };
@@ -221,7 +224,7 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
 
   // Build context prompt for Whisper based on session info
   const whisperContextPrompt = session 
-    ? `Şirket: ${session.companyName}. Pozisyon: ${session.positionTitle}. Aday: ${session.candidateName}.`
+    ? `Değerlendirme: ${session.assessmentTitle}. Aday: ${session.candidateName}.`
     : '';
 
   // Whisper hook for STT with real-time interim transcripts
@@ -240,19 +243,14 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
       
       if (!text.trim()) return;
       
-      // Send transcript to backend
+      // Send transcript to backend for STT validation
+      // The backend will respond with transcript:validated or transcript:rejected
+      // and the transcript entry will be added via useWebSocket handler
       const event: WSTranscriptUpdateEvent = {
         event: 'transcript:update',
         data: { text, isFinal: true }
       };
       send(event);
-      
-      // Add to local transcript
-      addTranscriptEntry({
-        speaker: 'candidate',
-        content: text,
-        phase: currentPhase,
-      });
       
       // Clear partial
       setPartialTranscript('');
@@ -316,21 +314,32 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
     setIsAudioPlaying(false);
     send({ event: 'interview:end', data: { reason } });
 
-    // Stop camera and upload video
+    // Stop camera and commit video (chunks already uploaded during interview)
     if (cameraEnabled) {
       stopFaceDetection();
-      stopVideoRecording();
-      stopCamera();
       setVideoRecordingStatus('processing');
 
-      const sessionId = useInterviewStore.getState().session?.sessionId;
-      if (sessionId) {
-        uploadVideo(sessionId).then((ok) => {
-          setVideoRecordingStatus(ok ? 'completed' : 'failed');
-        });
-      }
+      stopVideoRecording().then((ok) => {
+        setVideoRecordingStatus(ok ? 'completed' : 'failed');
+      });
+      stopCamera();
     }
-  }, [send, clearSimliBuffer, cameraEnabled, stopFaceDetection, stopVideoRecording, stopCamera, uploadVideo, setVideoRecordingStatus]);
+  }, [send, clearSimliBuffer, cameraEnabled, stopFaceDetection, stopVideoRecording, stopCamera, setVideoRecordingStatus]);
+
+  /**
+   * Cleanup media resources (camera, face detection, video recording)
+   * Called when AI-initiated closing finishes audio playback
+   */
+  const cleanupMedia = useCallback(() => {
+    if (cameraEnabled) {
+      stopFaceDetection();
+      setVideoRecordingStatus('processing');
+      stopVideoRecording().then((ok) => {
+        setVideoRecordingStatus(ok ? 'completed' : 'failed');
+      });
+      stopCamera();
+    }
+  }, [cameraEnabled, stopFaceDetection, stopVideoRecording, stopCamera, setVideoRecordingStatus]);
 
   /**
    * Interrupt AI speaking
@@ -468,10 +477,14 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
   }, []);
 
   /**
-   * Process audio data - send to Simli or play via fallback
+   * Process audio data - send to Simli or play via fallback,
+   * and feed into video recording so AI voice is captured.
    */
   const processAudio = useCallback(async (audioData: Uint8Array) => {
     sessionLogger.log('info', 'audio', 'audio:processing', { bytes: audioData.length });
+
+    // Feed AI audio into the video recording mix (non-blocking)
+    feedAiAudio(audioData);
     
     if (isSimliReady) {
       const audioDurationMs = await sendAudioToSimli(audioData);
@@ -486,7 +499,7 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
       sessionLogger.log('info', 'audio', 'audio:fallback-played', { durationMs: audioDurationMs });
       await new Promise(resolve => setTimeout(resolve, 500));
     }
-  }, [isSimliReady, sendAudioToSimli, playPcm16Fallback]);
+  }, [isSimliReady, sendAudioToSimli, playPcm16Fallback, feedAiAudio]);
 
   /**
    * Set up audio chunk handler - receive full audio and send to Simli
@@ -524,19 +537,22 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
       setIsAudioPlaying(false);
       audioProcessingRef.current = false;
       
+      // If interview is closing/completed, don't change interview state
+      const latestPageState = useInterviewStore.getState().pageState;
+      if (latestPageState === 'closing' || latestPageState === 'completed') {
+        sessionLogger.log('info', 'interview', 'audio:finished:closing', { pageState: latestPageState });
+        setInterviewState('idle');
+        return;
+      }
+
       // Check current turn to determine next state
-      // Get latest turn value from store (not from closure)
       const latestTurn = useInterviewStore.getState().currentTurn;
       
       if (latestTurn === 'candidate') {
-        // Sıra adayda - mikrofon açılacak
         sessionLogger.log('info', 'interview', 'audio:finished:turn-candidate', { action: 'activating-mic' });
         setInterviewState('waiting_candidate');
       } else {
-        // Sıra AI'da - AI devam edecek, mikrofon açılmayacak
         sessionLogger.log('info', 'interview', 'audio:finished:turn-ai', { action: 'waiting-for-ai' });
-        // Backend will send next ai:generating:start/ai:speaking:start automatically
-        // Keep state as ai_speaking or change to ai_generating
         setInterviewState('ai_generating');
       }
     });
@@ -547,34 +563,34 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
    * IMPORTANT: Only activate mic when it's candidate's turn AND no audio is being processed!
    */
   useEffect(() => {
-    // Double-check that no audio is being processed (including pending)
     const isAudioProcessing = audioProcessingRef.current || pendingAudioRef.current !== null;
     
     if (
       interviewState === 'waiting_candidate' && 
-      currentTurn === 'candidate' && // CRITICAL: Only if it's candidate's turn
+      currentTurn === 'candidate' &&
+      pageState === 'active' &&
       isConnected && 
       !isAudioPlaying &&
-      !isAudioProcessing && // CRITICAL: No audio being processed
+      !isAudioProcessing &&
       !isRecording &&
       !isProcessing
     ) {
       const timeout = setTimeout(() => {
-        // Final check before starting - in case state changed during timeout
         const finalTurn = useInterviewStore.getState().currentTurn;
         const finalState = useInterviewStore.getState().interviewState;
+        const finalPage = useInterviewStore.getState().pageState;
         
-        if (finalTurn === 'candidate' && finalState === 'waiting_candidate' && !audioProcessingRef.current) {
+        if (finalTurn === 'candidate' && finalState === 'waiting_candidate' && finalPage === 'active' && !audioProcessingRef.current) {
           console.log('[Interview] Auto-starting recording (turn is CANDIDATE, no audio processing)');
           startListening();
         } else {
-          console.log('[Interview] Skipping auto-start - conditions changed', { finalTurn, finalState });
+          console.log('[Interview] Skipping auto-start - conditions changed', { finalTurn, finalState, finalPage });
         }
-      }, 200); // Slightly longer delay for safety
+      }, 200);
       
       return () => clearTimeout(timeout);
     }
-  }, [interviewState, currentTurn, isConnected, isAudioPlaying, isRecording, isProcessing, startListening]);
+  }, [interviewState, currentTurn, pageState, isConnected, isAudioPlaying, isRecording, isProcessing, startListening]);
 
   // NOT: Reconnect resume artık otomatik tetiklenmiyor.
   // Tarayıcı autoplay politikası nedeniyle kullanıcı etkileşimi (tıklama) gerekli.
@@ -609,6 +625,9 @@ export function useInterview(options?: UseInterviewOptions): UseInterviewReturn 
     cameraStream,
     cameraVideoRef,
     faceDetectionDebugData,
+    
+    // Media cleanup (for AI-initiated closing)
+    cleanupMedia,
     
     resumeAfterReconnect: handleReconnectResume,
   };

@@ -1,8 +1,8 @@
 // ============================================
-// AI INTERVIEW - SHARED CONSTANTS
+// ORIENTATION ASSESSMENT - SHARED CONSTANTS
 // ============================================
 
-import type { SessionStatus, InterviewPhase, SpeakerType, SessionEventType } from './types.js';
+import type { SessionStatus, AssessmentPhase, SpeakerType, SessionEventType } from './types.js';
 
 // ---------- SESSION STATUS ----------
 
@@ -20,32 +20,23 @@ export const SESSION_STATUSES: SessionStatus[] = [
   'failed',
 ];
 
-// ---------- INTERVIEW PHASES ----------
+// ---------- ASSESSMENT PHASES ----------
 
-export const INTERVIEW_PHASE: Record<Uppercase<InterviewPhase>, InterviewPhase> = {
+export const ASSESSMENT_PHASE: Record<Uppercase<AssessmentPhase>, AssessmentPhase> = {
   INTRODUCTION: 'introduction',
-  EXPERIENCE: 'experience',
-  TECHNICAL: 'technical',
-  BEHAVIORAL: 'behavioral',
-  MOTIVATION: 'motivation',
+  ASSESSMENT: 'assessment',
   CLOSING: 'closing',
 } as const;
 
-export const INTERVIEW_PHASES: InterviewPhase[] = [
+export const ASSESSMENT_PHASES: AssessmentPhase[] = [
   'introduction',
-  'experience',
-  'technical',
-  'behavioral',
-  'motivation',
+  'assessment',
   'closing',
 ];
 
-export const PHASE_LABELS: Record<InterviewPhase, string> = {
-  introduction: 'Tanışma',
-  experience: 'Deneyim',
-  technical: 'Teknik',
-  behavioral: 'Davranışsal',
-  motivation: 'Motivasyon',
+export const PHASE_LABELS: Record<AssessmentPhase, string> = {
+  introduction: 'Giriş',
+  assessment: 'Değerlendirme',
   closing: 'Kapanış',
 };
 
@@ -74,7 +65,7 @@ export const SESSION_EVENT_TYPES: SessionEventType[] = [
   'reconnect_failed',
   'interrupt_triggered',
   'error_occurred',
-  'ats_callback_sent',
+  'callback_sent',
   'camera_face_lost',
   'camera_face_restored',
   'camera_gaze_away',
@@ -103,7 +94,6 @@ export const WS_SERVER_EVENTS = {
   AI_SPEAKING_START: 'ai:speaking:start',
   AI_SPEAKING_END: 'ai:speaking:end',
   PHASE_CHANGED: 'phase:changed',
-  QUESTION_NEW: 'question:new',
   INTERVIEW_ENDED: 'interview:ended',
   ERROR: 'error',
 } as const;
@@ -128,18 +118,7 @@ export const WS_ERROR_CODES = {
   AVATAR_ERROR: 'AVATAR_ERROR',
 } as const;
 
-// ---------- INTERVIEW CONFIG ----------
+// ---------- ASSESSMENT CONFIG ----------
 
-export const MAX_INTERVIEW_DURATION_MINUTES = 30;
+export const MAX_ASSESSMENT_DURATION_MINUTES = 45;
 export const DEFAULT_LANGUAGE = 'tr';
-
-// ---------- TOPIC IMPORTANCE ----------
-
-// Topic importance levels (1-5)
-export const TOPIC_IMPORTANCE = {
-  NICE_TO_HAVE: 1,
-  LOW: 2,
-  MEDIUM: 3,
-  HIGH: 4,
-  CRITICAL: 5,
-} as const;

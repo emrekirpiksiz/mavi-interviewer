@@ -1,8 +1,8 @@
 import { query } from '../index.js';
-import type { InterviewConfig, Position, Candidate, InterviewTopic, SessionSettings } from '@ai-interview/shared';
+import type { AssessmentConfig, Assessment, AssessmentQuestion, AssessmentCandidate, AssessmentSettings } from '@ai-interview/shared';
 
 // ============================================
-// INTERVIEW CONFIG DATABASE QUERIES
+// ASSESSMENT CONFIG DATABASE QUERIES
 // ============================================
 
 // ---------- Types ----------
@@ -10,31 +10,31 @@ import type { InterviewConfig, Position, Candidate, InterviewTopic, SessionSetti
 interface ConfigRow {
   id: string;
   session_id: string;
-  position_data: Position;
-  candidate_data: Candidate;
-  topics: InterviewTopic[];
-  settings: SessionSettings | null;
+  assessment_data: Assessment;
+  questions_data: AssessmentQuestion[];
+  candidate_data: AssessmentCandidate;
+  settings: AssessmentSettings | null;
   created_at: Date;
   deleted_at: Date | null;
 }
 
 interface CreateConfigParams {
   sessionId: string;
-  positionData: Position;
-  candidateData: Candidate;
-  topics: InterviewTopic[];
-  settings?: SessionSettings;
+  assessmentData: Assessment;
+  questionsData: AssessmentQuestion[];
+  candidateData: AssessmentCandidate;
+  settings?: AssessmentSettings;
 }
 
 // ---------- Helpers ----------
 
-function rowToConfig(row: ConfigRow): InterviewConfig {
+function rowToConfig(row: ConfigRow): AssessmentConfig {
   return {
     id: row.id,
     sessionId: row.session_id,
-    positionData: row.position_data,
+    assessmentData: row.assessment_data,
+    questionsData: row.questions_data,
     candidateData: row.candidate_data,
-    topics: row.topics,
     settings: row.settings ?? undefined,
     createdAt: row.created_at.toISOString(),
     deletedAt: row.deleted_at?.toISOString() ?? null,
@@ -43,21 +43,18 @@ function rowToConfig(row: ConfigRow): InterviewConfig {
 
 // ---------- Queries ----------
 
-/**
- * Create interview config for a session
- */
 export async function createConfig(
   params: CreateConfigParams
-): Promise<InterviewConfig> {
+): Promise<AssessmentConfig> {
   const result = await query<ConfigRow>(
-    `INSERT INTO interview_configs (session_id, position_data, candidate_data, topics, settings)
+    `INSERT INTO assessment_configs (session_id, assessment_data, questions_data, candidate_data, settings)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [
       params.sessionId,
-      JSON.stringify(params.positionData),
+      JSON.stringify(params.assessmentData),
+      JSON.stringify(params.questionsData),
       JSON.stringify(params.candidateData),
-      JSON.stringify(params.topics),
       JSON.stringify(params.settings ?? {}),
     ]
   );
@@ -65,14 +62,11 @@ export async function createConfig(
   return rowToConfig(result.rows[0]!);
 }
 
-/**
- * Get interview config by session ID
- */
 export async function getConfigBySessionId(
   sessionId: string
-): Promise<InterviewConfig | null> {
+): Promise<AssessmentConfig | null> {
   const result = await query<ConfigRow>(
-    `SELECT * FROM interview_configs 
+    `SELECT * FROM assessment_configs 
      WHERE session_id = $1 AND deleted_at IS NULL`,
     [sessionId]
   );
@@ -84,14 +78,11 @@ export async function getConfigBySessionId(
   return rowToConfig(result.rows[0]!);
 }
 
-/**
- * Get interview config by ID
- */
 export async function getConfigById(
   configId: string
-): Promise<InterviewConfig | null> {
+): Promise<AssessmentConfig | null> {
   const result = await query<ConfigRow>(
-    `SELECT * FROM interview_configs 
+    `SELECT * FROM assessment_configs 
      WHERE id = $1 AND deleted_at IS NULL`,
     [configId]
   );
@@ -103,12 +94,9 @@ export async function getConfigById(
   return rowToConfig(result.rows[0]!);
 }
 
-/**
- * Soft delete interview config
- */
 export async function deleteConfig(sessionId: string): Promise<boolean> {
   const result = await query(
-    `UPDATE interview_configs 
+    `UPDATE assessment_configs 
      SET deleted_at = NOW()
      WHERE session_id = $1 AND deleted_at IS NULL`,
     [sessionId]

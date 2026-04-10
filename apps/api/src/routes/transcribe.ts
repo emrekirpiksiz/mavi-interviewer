@@ -24,7 +24,7 @@ const upload = multer({
 
 // Initialize OpenAI client (uses same API key as Claude - or separate)
 const openai = new OpenAI({
-  apiKey: config.openaiApiKey || config.anthropicApiKey,
+  apiKey: config.openaiApiKey,
 });
 
 /**
@@ -66,20 +66,19 @@ router.post('/', transcribeLimiter, upload.single('audio'), async (req, res) => 
     fs.writeFileSync(tempFile, req.file.buffer);
 
     try {
-      // Build prompt for better transcription accuracy
-      // Include Turkish context and common interview terminology
       const basePrompt = language === 'tr' 
-        ? 'Bu bir iş görüşmesi kaydıdır. Türkçe konuşulmaktadır. Şirket isimleri, pozisyonlar ve teknik terimler doğru yazılmalıdır.'
-        : 'This is a job interview recording.';
+        ? 'Mavi Jeans şirketi hakkında Türkçe iş görüşmesi. Jean, denim, moda, perakende, mağaza, koleksiyon, sezon, sürdürülebilirlik, e-ticaret. Şirket ve marka isimleri orijinal yazımıyla korunmalıdır.'
+        : 'This is a job interview recording. Proper nouns and technical terms should be transcribed accurately.';
       
       const fullPrompt = contextPrompt 
-        ? `${basePrompt} Bağlam: ${contextPrompt}`
+        ? `${basePrompt} ${contextPrompt}`
         : basePrompt;
 
-      // Call Whisper API with verbose_json to get actual duration
+      const STT_MODEL = 'whisper-1';
+
       const transcription = await openai.audio.transcriptions.create({
         file: fs.createReadStream(tempFile),
-        model: 'whisper-1',
+        model: STT_MODEL,
         language: language,
         response_format: 'verbose_json',
         prompt: fullPrompt,
@@ -88,12 +87,10 @@ router.post('/', transcribeLimiter, upload.single('audio'), async (req, res) => 
 
       const durationMs = Date.now() - startTime;
       
-      // Extract text and duration from verbose_json response
       let transcriptText = transcription.text || '';
       const audioLengthSeconds = transcription.duration || 0;
       const audioLengthMs = Math.round(audioLengthSeconds * 1000);
       
-      // Whisper'dan gelen duration'ı manifest'e yaz
       if (sessionId && audioLengthMs > 0) {
         updateChunkDuration(sessionId, audioLengthMs);
       }
@@ -122,7 +119,7 @@ router.post('/', transcribeLimiter, upload.single('audio'), async (req, res) => 
       }
 
       const outputSize = transcriptText.length;
-      console.log(`[Transcribe] Result (${durationMs}ms): "${transcriptText.substring(0, 100)}${transcriptText.length > 100 ? '...' : ''}" (${audioLengthSeconds.toFixed(1)}s audio, noSpeech: ${avgNoSpeechProb.toFixed(2)})`);
+      console.log(`[Transcribe] Result (${durationMs}ms, ${STT_MODEL}): "${transcriptText.substring(0, 100)}${transcriptText.length > 100 ? '...' : ''}" (${audioLengthSeconds.toFixed(1)}s audio, noSpeech: ${avgNoSpeechProb.toFixed(2)})`);
 
       res.json({
         success: true,
@@ -133,8 +130,8 @@ router.post('/', transcribeLimiter, upload.single('audio'), async (req, res) => 
           durationMs,
           inputSize,
           outputSize,
-          model: 'whisper-1',
-          audioLengthMs: audioLengthMs,
+          model: STT_MODEL,
+          audioLengthMs,
         },
       });
     } finally {

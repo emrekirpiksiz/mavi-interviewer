@@ -1,15 +1,10 @@
 -- Migration: 006_create_indexes
--- Description: Create indexes for performance optimization
+-- Description: Create performance indexes
 
--- Status-based filtering (exclude soft-deleted)
-CREATE INDEX idx_sessions_status ON sessions(status) WHERE deleted_at IS NULL;
-
--- Transcript queries - ordered retrieval
-CREATE INDEX idx_transcript_session_seq ON transcript_entries(session_id, sequence_number) 
-    WHERE deleted_at IS NULL;
-
--- Events queries - session events with time ordering
-CREATE INDEX idx_events_session_created ON session_events(session_id, created_at);
-
--- Fast filtering of non-deleted sessions
-CREATE INDEX idx_sessions_not_deleted ON sessions(id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_sessions_status ON sessions(status);
+CREATE INDEX idx_sessions_external_id ON sessions(external_id) WHERE external_id IS NOT NULL;
+CREATE INDEX idx_assessment_configs_session_id ON assessment_configs(session_id);
+CREATE INDEX idx_transcript_entries_session_id ON transcript_entries(session_id);
+CREATE INDEX idx_transcript_entries_sequence ON transcript_entries(session_id, sequence_number);
+CREATE INDEX idx_session_events_session_id ON session_events(session_id);
+CREATE INDEX idx_session_events_type ON session_events(event_type);

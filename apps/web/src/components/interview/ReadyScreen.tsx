@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useInterviewStore } from '@/stores/interviewStore';
 import { useNetworkCheck } from '@/hooks/useNetworkCheck';
+import Image from 'next/image';
 import { 
   Play, 
   Mic, 
@@ -13,19 +14,17 @@ import {
   Check, 
   X, 
   AlertCircle,
+  AlertTriangle,
   Info,
   Shield,
   ChevronDown,
   ChevronUp,
   RefreshCw,
   Loader2,
-  Sparkles,
   MessageSquare,
   Clock,
   HelpCircle,
   RefreshCcw,
-  Volume2,
-  Square,
   CheckCircle2,
 } from 'lucide-react';
 
@@ -35,7 +34,7 @@ interface ReadyScreenProps {
   onCameraPermissionRequest?: () => Promise<boolean>;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
 
 const KVKK_TEXT = `6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") kapsamında, yapay zeka destekli bu mülakat sürecinde kişisel verileriniz (ses kaydı, görüntü kaydı ve mülakat yanıtları) işlenecektir.
 
@@ -54,8 +53,6 @@ Verilerin İşlenme Amacı:
 Verileriniz yalnızca işe alım süreci kapsamında kullanılacak ve yasal saklama süreleri sonunda silinecektir. KVKK kapsamındaki haklarınızı (erişim, düzeltme, silme vb.) kullanmak için işveren şirket ile iletişime geçebilirsiniz.
 
 Bu onay kutusunu işaretleyerek, yukarıda belirtilen şartları okuduğunuzu ve kişisel verilerinizin işlenmesine açık rıza verdiğinizi kabul etmiş olursunuz.`;
-
-const TEST_SENTENCE = 'Merhaba, görüşmeye hazırım.';
 
 export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissionRequest }: ReadyScreenProps) {
   const session = useInterviewStore((state) => state.session);
@@ -82,29 +79,56 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
   const [micChecking, setMicChecking] = useState(false);
   const [cameraChecking, setCameraChecking] = useState(false);
 
-  // Audio test state
-  const [audioTestState, setAudioTestState] = useState<'idle' | 'playing' | 'done'>('idle');
-  const [audioConfirmed, setAudioConfirmed] = useState(false);
-  const audioRef = useRef<AudioContext | null>(null);
-  const oscRef = useRef<OscillatorNode | null>(null);
+  // Camera preview state
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const cameraPreviewRef = useRef<HTMLVideoElement>(null);
 
-  // Mic test state
-  const [micTestState, setMicTestState] = useState<'idle' | 'recording' | 'processing' | 'done' | 'error'>('idle');
-  const [micTestResult, setMicTestResult] = useState<string | null>(null);
-  const [micTestConfirmed, setMicTestConfirmed] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const micTestTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Audio level state
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [hasSpeech, setHasSpeech] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
 
   // Headphone acknowledgement
   const [headphoneAck, setHeadphoneAck] = useState(false);
 
-  // Request microphone permission
+  // Request microphone permission and start level monitoring
   const handleMicRequest = useCallback(async () => {
     setMicChecking(true);
     try {
       const granted = await onMicPermissionRequest();
       setMicPermission(granted ? 'granted' : 'denied');
+
+      if (granted) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStreamRef.current = stream;
+
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new AudioCtx();
+        audioContextRef.current = ctx;
+
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.5;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const poll = () => {
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) sum += dataArray[i]!;
+          const avg = sum / dataArray.length;
+          const normalized = Math.min(avg / 80, 1);
+          setAudioLevel(normalized);
+          if (normalized > 0.15) setHasSpeech(true);
+          animationFrameRef.current = requestAnimationFrame(poll);
+        };
+        poll();
+      }
     } catch {
       setMicPermission('denied');
     } finally {
@@ -112,13 +136,18 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
     }
   }, [onMicPermissionRequest, setMicPermission]);
 
-  // Request camera permission
+  // Request camera permission and start preview
   const handleCameraRequest = useCallback(async () => {
     if (!onCameraPermissionRequest) return;
     setCameraChecking(true);
     try {
       const granted = await onCameraPermissionRequest();
       setCameraPermission(granted ? 'granted' : 'denied');
+
+      if (granted) {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setCameraStream(stream);
+      }
     } catch {
       setCameraPermission('denied');
     } finally {
@@ -126,112 +155,22 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
     }
   }, [onCameraPermissionRequest, setCameraPermission]);
 
-  // --- Audio Test: play a short beep tone ---
-  const playTestSound = useCallback(() => {
-    try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx();
-      audioRef.current = ctx;
-
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(440, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      oscRef.current = osc;
-      setAudioTestState('playing');
-
-      setTimeout(() => {
-        osc.stop();
-        ctx.close();
-        oscRef.current = null;
-        audioRef.current = null;
-        setAudioTestState('done');
-      }, 1500);
-    } catch {
-      setAudioTestState('done');
+  // Attach camera stream to video element
+  useEffect(() => {
+    if (cameraPreviewRef.current && cameraStream) {
+      cameraPreviewRef.current.srcObject = cameraStream;
     }
-  }, []);
+  }, [cameraStream]);
 
-  const stopTestSound = useCallback(() => {
-    if (oscRef.current) { try { oscRef.current.stop(); } catch { /* */ } }
-    if (audioRef.current) { try { audioRef.current.close(); } catch { /* */ } }
-    oscRef.current = null;
-    audioRef.current = null;
-    setAudioTestState('done');
-  }, []);
-
-  // --- Mic Test: record 3s, send to Whisper ---
-  const startMicTest = useCallback(async () => {
-    if (micPermission !== 'granted') {
-      await handleMicRequest();
-      if (useInterviewStore.getState().micPermission !== 'granted') return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm';
-      const recorder = new MediaRecorder(stream, { mimeType });
-      chunksRef.current = [];
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setMicTestState('processing');
-
-        const blob = new Blob(chunksRef.current, { type: mimeType });
-        const formData = new FormData();
-        formData.append('audio', blob, 'mic-test.webm');
-        formData.append('language', 'tr');
-        formData.append('prompt', `Kullanıcı test cümlesi söylüyor: "${TEST_SENTENCE}"`);
-
-        try {
-          const res = await fetch(`${API_URL}/transcribe`, { method: 'POST', body: formData });
-          const data = await res.json();
-          if (data.success && data.text && data.text.trim().length > 0) {
-            setMicTestResult(data.text);
-            setMicTestState('done');
-          } else {
-            setMicTestResult(null);
-            setMicTestState('error');
-          }
-        } catch {
-          setMicTestResult(null);
-          setMicTestState('error');
-        }
-      };
-
-      recorder.start();
-      setMicTestState('recording');
-
-      micTestTimerRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current?.state === 'recording') {
-          mediaRecorderRef.current.stop();
-        }
-      }, 4000);
-    } catch {
-      setMicTestState('error');
-    }
-  }, [micPermission, handleMicRequest]);
-
-  const resetMicTest = useCallback(() => {
-    if (micTestTimerRef.current) clearTimeout(micTestTimerRef.current);
-    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
-    setMicTestState('idle');
-    setMicTestResult(null);
-    setMicTestConfirmed(false);
-  }, []);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+      if (micStreamRef.current) micStreamRef.current.getTracks().forEach(t => t.stop());
+      if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    };
+  }, [cameraStream]);
 
   // All checks
   const cameraCheckPassed = !cameraEnabled || cameraPermission === 'granted';
@@ -243,11 +182,15 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
     connectionQuality !== 'checking' &&
     audioOutputStatus === 'available';
 
-  const allTestsPassed = audioConfirmed && micTestConfirmed && headphoneAck;
-  const canStart = kvkkAccepted && systemChecksPassed && allTestsPassed;
+  const canStart = kvkkAccepted && systemChecksPassed && hasSpeech && headphoneAck;
 
   const handleStart = () => {
     if (!canStart) return;
+    // Cleanup preview streams before navigating
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+    if (micStreamRef.current) micStreamRef.current.getTracks().forEach(t => t.stop());
+    if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
     setPageState('active');
   };
 
@@ -260,20 +203,37 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
   };
 
   return (
-    <div className="min-h-screen bg-[var(--bg-primary)] py-8 px-4">
-      <div className="max-w-2xl mx-auto space-y-6">
+    <div className="min-h-screen bg-[var(--bg-primary)] py-6 sm:py-8 px-4 pb-safe">
+      <div className="max-w-2xl mx-auto space-y-5 sm:space-y-6">
         
-        {/* ==================== HEADER ==================== */}
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-muted)] flex items-center justify-center shadow-lg shadow-[var(--accent-primary)]/20">
-            <Sparkles className="w-8 h-8 text-white" />
+        {/* ==================== POC BANNER ==================== */}
+        <div className="flex items-start gap-3 p-3.5 bg-amber-500/10 border border-amber-500/25 rounded-xl">
+          <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+          <p className="text-amber-300/90 text-xs sm:text-sm leading-relaxed">
+            Bu uygulama <span className="font-semibold text-amber-300">POC modundadır.</span> Uygulamanın POC versiyonunu görüntülüyorsunuz.
+          </p>
+        </div>
+
+        {/* ==================== HEADER WITH LOGO ==================== */}
+        <div className="text-center space-y-5 sm:space-y-6">
+          <div className="flex flex-col items-center gap-4">
+            <Image
+              src="/mavi_logo.png"
+              alt="Mavi Logo"
+              width={120}
+              height={120}
+              className="rounded-2xl"
+            />
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-[var(--text-primary)]">
+              Mavi Avatar Uygulaması
+            </h2>
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-[var(--text-primary)]">
+            <h1 className="text-2xl sm:text-3xl font-bold text-[var(--text-primary)]">
               Merhaba{session?.candidateName ? `, ${session.candidateName}` : ''}!
             </h1>
-            <p className="text-[var(--text-secondary)] mt-2 text-lg">
-              AI destekli mülakata hoş geldiniz
+            <p className="text-[var(--text-secondary)] mt-1.5 sm:mt-2 text-base sm:text-lg">
+              Görüşmeye hoş geldiniz
             </p>
           </div>
         </div>
@@ -286,246 +246,208 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-semibold text-[var(--text-primary)]">
-                {session?.positionTitle || 'Pozisyon'}
+                {session?.assessmentTitle || 'Değerlendirme'}
               </h2>
               <p className="text-[var(--text-secondary)]">
-                {session?.companyName || 'Şirket'}
+                {session?.totalQuestions ? `${session.totalQuestions} soru` : ''}
               </p>
               <div className="flex items-center gap-2 mt-2 text-[var(--text-muted)] text-sm">
                 <Clock className="w-4 h-4" />
-                <span>Tahmini süre: 15-20 dakika</span>
+                <span>Tahmini süre: 10-15 dakika</span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* ==================== SYSTEM CHECKS (auto) ==================== */}
+        {/* ==================== SYSTEM CHECKS + LIVE PREVIEW ==================== */}
         <div className="bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-default)] overflow-hidden">
           <div className="px-5 py-4 border-b border-[var(--border-default)]">
             <h3 className="text-[var(--text-primary)] font-semibold flex items-center gap-2">
               <Shield className="w-5 h-5 text-[var(--accent-primary)]" />
               Sistem Kontrolleri
             </h3>
-          </div>
-          <div className="p-4 space-y-3">
-            {micPermission === 'pending' && !micChecking ? (
-              <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-tertiary)]">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-                    <Mic className="w-5 h-5 text-[var(--accent-primary)]" />
-                  </div>
-                  <div>
-                    <p className="text-[var(--text-primary)] font-medium">Mikrofon İzni</p>
-                    <p className="text-sm text-[var(--text-muted)]">İzin bekleniyor</p>
-                  </div>
-                </div>
-                <button onClick={handleMicRequest} className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors">
-                  Mikrofon İzni Ver
-                </button>
-              </div>
-            ) : (
-              <SystemCheckItem icon={Mic} label="Mikrofon İzni"
-                status={micChecking ? 'loading' : micPermission === 'granted' ? 'success' : micPermission === 'denied' ? 'error' : 'loading'}
-                statusText={micChecking ? 'Kontrol ediliyor...' : micPermission === 'granted' ? 'İzin verildi' : micPermission === 'denied' ? 'İzin reddedildi' : 'Bekleniyor...'}
-                onRetry={micPermission === 'denied' ? handleMicRequest : undefined}
-              />
-            )}
-            {cameraEnabled && (
-              cameraPermission === 'pending' && !cameraChecking ? (
-                <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-tertiary)]">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-[var(--accent-primary)]/10 flex items-center justify-center">
-                      <Camera className="w-5 h-5 text-[var(--accent-primary)]" />
-                    </div>
-                    <div>
-                      <p className="text-[var(--text-primary)] font-medium">Kamera İzni</p>
-                      <p className="text-sm text-[var(--text-muted)]">İzin bekleniyor</p>
-                    </div>
-                  </div>
-                  <button onClick={handleCameraRequest} className="px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors">
-                    Kamera İzni Ver
-                  </button>
-                </div>
-              ) : (
-                <SystemCheckItem icon={Camera} label="Kamera İzni"
-                  status={cameraChecking ? 'loading' : cameraPermission === 'granted' ? 'success' : cameraPermission === 'denied' ? 'error' : 'loading'}
-                  statusText={cameraChecking ? 'Kontrol ediliyor...' : cameraPermission === 'granted' ? 'İzin verildi' : cameraPermission === 'denied' ? 'İzin reddedildi' : 'Bekleniyor...'}
-                  onRetry={cameraPermission === 'denied' ? handleCameraRequest : undefined}
-                />
-              )
-            )}
-            <SystemCheckItem icon={Headphones} label="Ses Çıkışı"
-              status={audioOutputStatus === 'checking' ? 'loading' : audioOutputStatus === 'available' ? 'success' : 'error'}
-              statusText={audioOutputStatus === 'checking' ? 'Kontrol ediliyor...' : audioOutputStatus === 'available' ? 'Kulaklık/Hoparlör hazır' : 'Ses çıkışı bulunamadı'}
-              onRetry={audioOutputStatus === 'unavailable' ? recheckAudioOutput : undefined}
-            />
-            <SystemCheckItem icon={connectionQuality === 'offline' ? WifiOff : Wifi} label="İnternet Bağlantısı"
-              status={getBandwidthDisplay().status} statusText={getBandwidthDisplay().text}
-              onRetry={connectionQuality !== 'checking' ? recheckConnection : undefined}
-            />
-            <SystemCheckItem icon={Wifi} label="Sunucu Bağlantısı"
-              status={wsConnected ? 'success' : 'loading'}
-              statusText={wsConnected ? 'Bağlı' : 'Bağlanıyor...'}
-            />
-          </div>
-          {connectionQuality === 'poor' && (
-            <div className="mx-4 mb-4 p-3 bg-[var(--warning)]/10 border border-[var(--warning)]/30 rounded-lg">
-              <p className="text-[var(--warning)] text-sm flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>Bağlantınız zayıf. Görüşme sırasında kesintiler yaşayabilirsiniz.</span>
-              </p>
-            </div>
-          )}
-        </div>
-
-        {/* ==================== AUDIO & MIC TESTS ==================== */}
-        <div className="bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-default)] overflow-hidden">
-          <div className="px-5 py-4 border-b border-[var(--border-default)]">
-            <h3 className="text-[var(--text-primary)] font-semibold flex items-center gap-2">
-              <Volume2 className="w-5 h-5 text-[var(--accent-primary)]" />
-              Ses & Mikrofon Testi
-            </h3>
             <p className="text-[var(--text-muted)] text-sm mt-1">
-              Görüşme öncesi ses ve mikrofon doğrulaması
+              Kamera ve mikrofon izinlerini verin, ardından konuşarak ses çubuğunun hareket ettiğini doğrulayın.
             </p>
           </div>
 
           <div className="p-4 space-y-4">
-            {/* 1. Audio Output Test */}
-            <div className="p-4 rounded-lg bg-[var(--bg-tertiary)] space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${audioConfirmed ? 'bg-[var(--success)]/10' : 'bg-[var(--accent-primary)]/10'}`}>
-                    <Volume2 className={`w-5 h-5 ${audioConfirmed ? 'text-[var(--success)]' : 'text-[var(--accent-primary)]'}`} />
-                  </div>
-                  <div>
-                    <p className="text-[var(--text-primary)] font-medium">Adım 1: Ses Testi</p>
-                    <p className="text-[var(--text-muted)] text-sm">Örnek sesi dinleyin ve duyduğunuzu onaylayın</p>
-                  </div>
-                </div>
-                {audioConfirmed && <CheckCircle2 className="w-5 h-5 text-[var(--success)]" />}
-              </div>
-
-              {!audioConfirmed && (
-                <div className="ml-[52px] space-y-3">
-                  <div className="flex items-center gap-3">
-                    {audioTestState === 'idle' && (
-                      <button onClick={playTestSound} className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors">
-                        <Play className="w-4 h-4" /> Sesi Çal
-                      </button>
-                    )}
-                    {audioTestState === 'playing' && (
-                      <button onClick={stopTestSound} className="flex items-center gap-2 px-4 py-2 bg-[var(--warning)] text-white text-sm font-medium rounded-lg animate-pulse">
-                        <Square className="w-4 h-4" /> Çalıyor...
-                      </button>
-                    )}
-                    {audioTestState === 'done' && (
-                      <>
-                        <button onClick={playTestSound} className="flex items-center gap-2 px-3 py-2 bg-[var(--bg-secondary)] hover:bg-[var(--bg-primary)] text-[var(--text-secondary)] text-sm rounded-lg transition-colors">
-                          <RefreshCw className="w-4 h-4" /> Tekrar Çal
+            {/* Camera + Mic live preview area */}
+            <div className="flex flex-col sm:flex-row gap-4">
+              {/* Camera preview */}
+              <div className="flex-1">
+                <div className="relative w-full aspect-video rounded-lg bg-[var(--bg-tertiary)] overflow-hidden border border-[var(--border-default)]">
+                  {cameraPermission === 'granted' && cameraStream ? (
+                    <video
+                      ref={cameraPreviewRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover mirror"
+                      style={{ transform: 'scaleX(-1)' }}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center w-full h-full gap-3 p-4">
+                      <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
+                        cameraPermission === 'denied' ? 'bg-[var(--error)]/10' : 'bg-[var(--bg-secondary)]'
+                      }`}>
+                        <Camera className={`w-7 h-7 ${
+                          cameraPermission === 'denied' ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'
+                        }`} />
+                      </div>
+                      {cameraPermission === 'denied' ? (
+                        <p className="text-[var(--error)] text-sm text-center">Kamera izni reddedildi</p>
+                      ) : (
+                        <button
+                          onClick={handleCameraRequest}
+                          disabled={cameraChecking}
+                          className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          {cameraChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                          Kamera İzni Ver
                         </button>
-                        <button onClick={() => setAudioConfirmed(true)} className="flex items-center gap-2 px-4 py-2 bg-[var(--success)] hover:bg-[var(--success)]/80 text-white text-sm font-medium rounded-lg transition-colors">
-                          <Check className="w-4 h-4" /> Sesi Duydum
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 2. Microphone Test */}
-            <div className="p-4 rounded-lg bg-[var(--bg-tertiary)] space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${micTestConfirmed ? 'bg-[var(--success)]/10' : 'bg-[var(--accent-primary)]/10'}`}>
-                    <Mic className={`w-5 h-5 ${micTestConfirmed ? 'text-[var(--success)]' : 'text-[var(--accent-primary)]'}`} />
-                  </div>
-                  <div>
-                    <p className="text-[var(--text-primary)] font-medium">Adım 2: Mikrofon Testi</p>
-                    <p className="text-[var(--text-muted)] text-sm">Kısa bir cümle söyleyin, doğru algılandığını onaylayın</p>
-                  </div>
-                </div>
-                {micTestConfirmed && <CheckCircle2 className="w-5 h-5 text-[var(--success)]" />}
-              </div>
-
-              {!micTestConfirmed && (
-                <div className="ml-[52px] space-y-3">
-                  {micPermission !== 'granted' && (
-                    <p className="text-[var(--text-muted)] text-sm">Önce mikrofon izni verin.</p>
+                      )}
+                    </div>
                   )}
+                  {/* Camera status badge */}
+                  {cameraPermission === 'granted' && (
+                    <div className="absolute top-2 left-2 flex items-center gap-1.5 px-2 py-1 bg-black/60 backdrop-blur-sm rounded-md">
+                      <div className="w-2 h-2 rounded-full bg-[var(--success)] animate-pulse" />
+                      <span className="text-xs text-white/80">Kamera aktif</span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-                  {micPermission === 'granted' && micTestState === 'idle' && (
-                    <div>
-                      <p className="text-[var(--text-muted)] text-sm mb-2">
-                        Butona basın ve şunu söyleyin: <span className="text-[var(--text-primary)] font-medium">&quot;{TEST_SENTENCE}&quot;</span>
+              {/* Right column: mic + audio level */}
+              <div className="flex-1 flex flex-col gap-4">
+                {/* Microphone permission + level */}
+                <div className="flex-1 p-4 rounded-lg bg-[var(--bg-tertiary)] border border-[var(--border-default)] flex flex-col">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                      micPermission === 'granted' ? 'bg-[var(--success)]/10' : micPermission === 'denied' ? 'bg-[var(--error)]/10' : 'bg-[var(--accent-primary)]/10'
+                    }`}>
+                      <Mic className={`w-5 h-5 ${
+                        micPermission === 'granted' ? 'text-[var(--success)]' : micPermission === 'denied' ? 'text-[var(--error)]' : 'text-[var(--accent-primary)]'
+                      }`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[var(--text-primary)] font-medium text-sm">Mikrofon</p>
+                      <p className={`text-xs ${
+                        micPermission === 'granted' ? 'text-[var(--success)]' : micPermission === 'denied' ? 'text-[var(--error)]' : 'text-[var(--text-muted)]'
+                      }`}>
+                        {micPermission === 'granted' ? 'İzin verildi' : micPermission === 'denied' ? 'İzin reddedildi' : 'Bekleniyor'}
                       </p>
-                      <button onClick={startMicTest} className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors">
-                        <Mic className="w-4 h-4" /> Kayda Başla
-                      </button>
                     </div>
-                  )}
+                    {micPermission === 'granted' && <Check className="w-5 h-5 text-[var(--success)]" />}
+                  </div>
 
-                  {micTestState === 'recording' && (
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2 px-4 py-2 bg-[var(--error)] text-white text-sm font-medium rounded-lg animate-pulse">
-                        <div className="w-3 h-3 bg-white rounded-full animate-ping" />
-                        Dinleniyor... Konuşun
+                  {micPermission !== 'granted' ? (
+                    <button
+                      onClick={handleMicRequest}
+                      disabled={micChecking}
+                      className="flex items-center justify-center gap-2 w-full py-2.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {micChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mic className="w-4 h-4" />}
+                      Mikrofon İzni Ver
+                    </button>
+                  ) : (
+                    <div className="flex-1 flex flex-col justify-center gap-2">
+                      <p className="text-[var(--text-muted)] text-xs">
+                        {hasSpeech ? 'Ses algılandı!' : 'Lütfen bir şeyler söyleyin...'}
+                      </p>
+                      {/* Audio level bars */}
+                      <div className="flex items-end gap-1 h-10">
+                        {Array.from({ length: 20 }).map((_, i) => {
+                          const threshold = i / 20;
+                          const isActive = audioLevel > threshold;
+                          const barColor = i < 12
+                            ? 'bg-[var(--success)]'
+                            : i < 16
+                              ? 'bg-[var(--warning)]'
+                              : 'bg-[var(--error)]';
+                          return (
+                            <div
+                              key={i}
+                              className={`flex-1 rounded-sm transition-all duration-75 ${
+                                isActive ? barColor : 'bg-[var(--bg-secondary)]'
+                              }`}
+                              style={{
+                                height: `${30 + (i / 20) * 70}%`,
+                                opacity: isActive ? 1 : 0.3,
+                              }}
+                            />
+                          );
+                        })}
                       </div>
-                    </div>
-                  )}
-
-                  {micTestState === 'processing' && (
-                    <div className="flex items-center gap-2 text-[var(--text-muted)] text-sm">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Sesiniz işleniyor...
-                    </div>
-                  )}
-
-                  {micTestState === 'done' && micTestResult && (
-                    <div className="space-y-2">
-                      <div className="p-3 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border-default)]">
-                        <p className="text-xs text-[var(--text-muted)] mb-1">Algılanan:</p>
-                        <p className="text-[var(--text-primary)] font-medium">&quot;{micTestResult}&quot;</p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <button onClick={resetMicTest} className="flex items-center gap-2 px-3 py-2 bg-[var(--bg-secondary)] hover:bg-[var(--bg-primary)] text-[var(--text-secondary)] text-sm rounded-lg transition-colors">
-                          <RefreshCw className="w-4 h-4" /> Tekrar Dene
-                        </button>
-                        <button onClick={() => setMicTestConfirmed(true)} className="flex items-center gap-2 px-4 py-2 bg-[var(--success)] hover:bg-[var(--success)]/80 text-white text-sm font-medium rounded-lg transition-colors">
-                          <Check className="w-4 h-4" /> Doğru Algılandı
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {micTestState === 'error' && (
-                    <div className="space-y-2">
-                      <p className="text-[var(--error)] text-sm">Ses algılanamadı. Lütfen tekrar deneyin.</p>
-                      <button onClick={resetMicTest} className="flex items-center gap-2 px-4 py-2 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white text-sm font-medium rounded-lg transition-colors">
-                        <RefreshCw className="w-4 h-4" /> Tekrar Dene
-                      </button>
+                      {hasSpeech && (
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[var(--success)]" />
+                          <span className="text-[var(--success)] text-xs font-medium">Mikrofon çalışıyor</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
+              </div>
             </div>
+
+            {/* Mic/environment tip */}
+            <div className="flex items-start gap-2.5 p-3 bg-[var(--accent-primary)]/5 border border-[var(--accent-primary)]/15 rounded-lg">
+              <Headphones className="w-4 h-4 text-[var(--accent-primary)] flex-shrink-0 mt-0.5" />
+              <p className="text-[var(--text-muted)] text-xs leading-relaxed">
+                Kulaklıklı bir mikrofon kullanmanız ve arka plan seslerinden arındırılmış bir ortamda olmanız, görüşme esnasında cevaplarınızı doğru alabilmemiz için önemlidir.
+              </p>
+            </div>
+
+            {/* Other system checks (compact) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <CompactCheckItem
+                icon={Headphones}
+                label="Ses Çıkışı"
+                status={audioOutputStatus === 'checking' ? 'loading' : audioOutputStatus === 'available' ? 'success' : 'error'}
+                statusText={audioOutputStatus === 'checking' ? 'Kontrol...' : audioOutputStatus === 'available' ? 'Hazır' : 'Bulunamadı'}
+                onRetry={audioOutputStatus === 'unavailable' ? recheckAudioOutput : undefined}
+              />
+              <CompactCheckItem
+                icon={connectionQuality === 'offline' ? WifiOff : Wifi}
+                label="İnternet"
+                status={getBandwidthDisplay().status}
+                statusText={getBandwidthDisplay().text}
+                onRetry={connectionQuality !== 'checking' ? recheckConnection : undefined}
+              />
+              <CompactCheckItem
+                icon={Wifi}
+                label="Sunucu"
+                status={wsConnected ? 'success' : 'loading'}
+                statusText={wsConnected ? 'Bağlı' : 'Bağlanıyor...'}
+              />
+            </div>
+
+            {connectionQuality === 'poor' && (
+              <div className="p-3 bg-[var(--warning)]/10 border border-[var(--warning)]/30 rounded-lg">
+                <p className="text-[var(--warning)] text-sm flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>Bağlantınız zayıf. Görüşme sırasında kesintiler yaşayabilirsiniz.</span>
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ==================== AI INFO ==================== */}
+        {/* ==================== GÖRÜŞME HAKKINDA ==================== */}
         <div className="bg-[var(--bg-secondary)] rounded-xl border border-[var(--border-default)] overflow-hidden">
           <div className="px-5 py-4 border-b border-[var(--border-default)]">
             <h3 className="text-[var(--text-primary)] font-semibold flex items-center gap-2">
               <Info className="w-5 h-5 text-[var(--accent-primary)]" />
-              AI Görüşme Hakkında
+              Görüşme Hakkında
             </h3>
           </div>
           <div className="p-5 space-y-4">
             <div className="space-y-3 text-[var(--text-secondary)] text-sm">
-              <InfoItem icon={Sparkles} title="Yapay Zeka ile Görüşme" description="Bu görüşme, yapay zeka destekli bir asistan tarafından gerçekleştirilmektedir. Sorular pozisyona özel olarak hazırlanmıştır." />
-              <InfoItem icon={Mic} title="Sıra Tabanlı Görüşme" description="Görüşme sıra tabanlıdır. AI soru sorar, siz dinlersiniz. Sıra size geçtiğinde mikrofon butonu aktif olur. Konuşmanızı bitirdiğinizde Gönder butonuna basarsınız." />
-              <InfoItem icon={Clock} title="Süre" description="Görüşme ortalama 15-20 dakika sürmektedir. İstediğiniz zaman görüşmeyi sonlandırabilirsiniz." />
+              <InfoItem icon={RefreshCcw} title="Sıra Tabanlı Görüşme" description="Bu görüşme sıra tabanlıdır. AI mülakatçı konuşurken siz dinlersiniz, sıra size geçtiğinde mikrofon otomatik olarak aktif olur. Konuşmanız bittiğinde Gönder butonuna basarsınız." />
+              <InfoItem icon={MessageSquare} title="Yapay Zeka Destekli" description="Görüşme yapay zeka destekli bir asistan tarafından yürütülmektedir." />
+              <InfoItem icon={Clock} title="Süre" description="Görüşme ortalama 10-15 dakika sürmektedir." />
             </div>
 
             <div className="mt-4 p-4 bg-[var(--bg-tertiary)] rounded-lg">
@@ -581,7 +503,7 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
                 </div>
               </div>
               <span className="text-[var(--text-secondary)] text-sm leading-relaxed">
-                KVKK Aydınlatma Metni'ni okudum ve kişisel verilerimin işlenmesine açık rıza veriyorum.
+                KVKK Aydınlatma Metni&apos;ni okudum ve kişisel verilerimin işlenmesine açık rıza veriyorum.
                 <button type="button" onClick={(e) => { e.preventDefault(); setKvkkExpanded(true); }} className="text-[var(--accent-primary)] hover:underline ml-1">(Metni oku)</button>
               </span>
             </label>
@@ -604,9 +526,9 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
         </div>
 
         {/* ==================== START BUTTON ==================== */}
-        <div className="pt-2">
+        <div className="pt-2 pb-4 sm:pb-2">
           <button onClick={handleStart} disabled={!canStart}
-            className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-200 flex items-center justify-center gap-3 ${canStart ? 'bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-muted)] text-white hover:shadow-lg hover:shadow-[var(--accent-primary)]/30 hover:scale-[1.02]' : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] cursor-not-allowed'}`}
+            className={`w-full py-4 rounded-xl font-semibold text-lg transition-all duration-200 flex items-center justify-center gap-3 active:scale-[0.98] ${canStart ? 'bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-muted)] text-white hover:shadow-lg hover:shadow-[var(--accent-primary)]/30 hover:scale-[1.02]' : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] cursor-not-allowed'}`}
           >
             <Play className="w-6 h-6" />
             Görüşmeye Başla
@@ -616,11 +538,13 @@ export function ReadyScreen({ onStart, onMicPermissionRequest, onCameraPermissio
             <p className="text-center text-[var(--text-muted)] text-sm mt-3">
               {!systemChecksPassed 
                 ? 'Lütfen sistem kontrollerinin tamamlanmasını bekleyin.'
-                : !allTestsPassed
-                  ? 'Lütfen ses ve mikrofon testlerini tamamlayın.'
+                : !hasSpeech
+                  ? 'Lütfen mikrofona bir şeyler söyleyerek test edin.'
                   : !kvkkAccepted 
                     ? 'Devam etmek için KVKK onayı vermeniz gerekmektedir.'
-                    : 'Hazırlanıyor...'
+                    : !headphoneAck
+                      ? 'Kulaklık/ses onayı verin.'
+                      : 'Hazırlanıyor...'
               }
             </p>
           )}
@@ -642,7 +566,7 @@ function CustomCheckbox({ checked, onChange }: { checked: boolean; onChange: (v:
   );
 }
 
-interface SystemCheckItemProps {
+interface CompactCheckItemProps {
   icon: React.ElementType;
   label: string;
   status: 'success' | 'error' | 'warning' | 'loading';
@@ -650,27 +574,27 @@ interface SystemCheckItemProps {
   onRetry?: () => void;
 }
 
-function SystemCheckItem({ icon: Icon, label, status, statusText, onRetry }: SystemCheckItemProps) {
-  const { icon: StatusIcon, color, bg } = getCheckStatusConfig(status);
+function CompactCheckItem({ icon: Icon, label, status, statusText, onRetry }: CompactCheckItemProps) {
+  const config = getCheckStatusConfig(status);
   return (
-    <div className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-tertiary)]">
-      <div className="flex items-center gap-3">
-        <div className={`w-10 h-10 rounded-lg ${bg} flex items-center justify-center`}>
-          <Icon className={`w-5 h-5 ${color}`} />
-        </div>
-        <div>
-          <p className="text-[var(--text-primary)] font-medium">{label}</p>
-          <p className={`text-sm ${color}`}>{statusText}</p>
-        </div>
+    <div className="flex items-center gap-2.5 p-3 rounded-lg bg-[var(--bg-tertiary)]">
+      <Icon className={`w-4 h-4 ${config.color} flex-shrink-0`} />
+      <div className="flex-1 min-w-0">
+        <p className="text-[var(--text-primary)] text-xs font-medium truncate">{label}</p>
+        <p className={`text-xs truncate ${config.color}`}>{statusText}</p>
       </div>
-      <div className="flex items-center gap-2">
-        {status === 'loading' ? <Loader2 className={`w-5 h-5 ${color} animate-spin`} /> : <StatusIcon className={`w-5 h-5 ${color}`} />}
-        {onRetry && status !== 'loading' && (
-          <button onClick={onRetry} className="p-1.5 rounded-lg hover:bg-[var(--bg-secondary)] transition-colors" title="Tekrar dene">
-            <RefreshCw className="w-4 h-4 text-[var(--text-muted)]" />
-          </button>
-        )}
-      </div>
+      {status === 'loading' ? (
+        <Loader2 className={`w-4 h-4 ${config.color} animate-spin flex-shrink-0`} />
+      ) : (
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <config.icon className={`w-4 h-4 ${config.color}`} />
+          {onRetry && status !== 'loading' && (
+            <button onClick={onRetry} className="p-1 rounded hover:bg-[var(--bg-secondary)] transition-colors" title="Tekrar dene">
+              <RefreshCw className="w-3 h-3 text-[var(--text-muted)]" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -13,9 +13,11 @@ import { Timer } from './Timer';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { NetworkMetricsPanel } from './NetworkMetricsPanel';
 import { ConnectionStatus } from './ConnectionStatus';
-import { CheckCircle, Copy, Check, X, Lightbulb, Bug, PhoneOff } from 'lucide-react';
+import { CheckCircle, Copy, Check, X, Lightbulb, Bug, PhoneOff, Loader2, Radio, Brain, Disc3, Sparkles } from 'lucide-react';
 import { useState } from 'react';
+import Image from 'next/image';
 import { sessionLogger } from '@/lib/sessionLogger';
+import type { CallbackDebugInfo } from '@/stores/interviewStore';
 
 // ============================================
 // ACTIVE SCREEN
@@ -34,8 +36,10 @@ interface ActiveScreenProps {
   isAudioPlaying: boolean;
   onSimliInit?: () => Promise<boolean>;
   onStartInterview?: () => void;
+  isClosing?: boolean;
   isCompleted?: boolean;
   onCloseSimli?: () => void;
+  onCleanupMedia?: () => void;
   onResumeAfterReconnect?: () => void;
   cameraStream?: MediaStream | null;
   cameraVideoRef?: React.RefObject<HTMLVideoElement | null>;
@@ -54,8 +58,10 @@ export function ActiveScreen({
   isAudioPlaying,
   onSimliInit,
   onStartInterview,
+  isClosing = false,
   isCompleted = false,
   onCloseSimli,
+  onCleanupMedia,
   onResumeAfterReconnect,
   cameraStream,
   cameraVideoRef,
@@ -69,6 +75,7 @@ export function ActiveScreen({
   const elapsedSeconds = useInterviewStore((state) => state.elapsedSeconds);
   const transcriptEntries = useInterviewStore((state) => state.transcriptEntries);
   const isReconnect = useInterviewStore((state) => state.isReconnect);
+  const callbackDebug = useInterviewStore((state) => state.callbackDebug);
   const simliInitAttempted = useRef(false);
   const interviewStarted = useRef(false);
   const simliClosedRef = useRef(false);
@@ -80,7 +87,15 @@ export function ActiveScreen({
   const [showReconnectOverlay, setShowReconnectOverlay] = useState(isReconnect);
   const [reconnectLoading, setReconnectLoading] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [showResultsOverlay, setShowResultsOverlay] = useState(false);
+  const closingAudioDoneRef = useRef(false);
   const reconnectResumed = useRef(false);
+
+  // Initialization loading overlay
+  type InitStep = 'avatar' | 'questions' | 'recording' | 'ready' | 'done';
+  const [initStep, setInitStep] = useState<InitStep>('avatar');
+  const [showInitOverlay, setShowInitOverlay] = useState(!isReconnect);
+  const initOverlayDismissed = useRef(false);
 
   // Reconnect: kullanıcı "Görüşmeye Devam Et" butonuna tıklayınca
   // 1. AudioContext'i kullanıcı jesti içinde unlock et (Chrome autoplay policy)
@@ -145,30 +160,53 @@ export function ActiveScreen({
     }
   }, [reconnectLoading, simliReady, simliTimedOut, onResumeAfterReconnect]);
 
-  // Timer interval - pause when completed
+  // Timer interval - pause when closing or completed
   useEffect(() => {
-    if (isCompleted) return;
+    if (isClosing || isCompleted) return;
     
     const interval = setInterval(() => {
       tick();
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [tick, isCompleted]);
+  }, [tick, isClosing, isCompleted]);
 
-  // When interview completes, show overlay and close Simli
+  // Closing flow: wait for audio to finish, then show results overlay
+  useEffect(() => {
+    if (!isClosing || closingAudioDoneRef.current) return;
+
+    if (!isAudioPlaying) {
+      closingAudioDoneRef.current = true;
+      console.log('[ActiveScreen] Closing audio finished, showing results overlay');
+
+      if (onCloseSimli && !simliClosedRef.current) {
+        console.log('[ActiveScreen] Closing Simli connection (closing flow)');
+        onCloseSimli();
+        simliClosedRef.current = true;
+      }
+
+      // Stop camera, video recording, face detection so video commit triggers callback
+      if (onCleanupMedia) {
+        onCleanupMedia();
+      }
+
+      setShowResultsOverlay(true);
+    }
+  }, [isClosing, isAudioPlaying, onCloseSimli, onCleanupMedia]);
+
+  // When interview completes (after closing), show completed overlay
   useEffect(() => {
     if (isCompleted && !simliClosedRef.current) {
-      setShowCompletedOverlay(true);
-      
-      // Close Simli to stop usage billing
       if (onCloseSimli) {
         console.log('[ActiveScreen] Closing Simli connection (interview completed)');
         onCloseSimli();
         simliClosedRef.current = true;
       }
+      if (!showResultsOverlay) {
+        setShowCompletedOverlay(true);
+      }
     }
-  }, [isCompleted, onCloseSimli]);
+  }, [isCompleted, onCloseSimli, showResultsOverlay]);
 
   // Initialize Simli when ActiveScreen mounts - ONLY for normal flow
   // Reconnect'te Simli init kullanıcı tıklamasından sonra yapılır (AudioContext autoplay policy)
@@ -222,6 +260,53 @@ export function ActiveScreen({
     }
   }, [simliReady, simliTimedOut, onStartInterview, isReconnect, interviewState]);
 
+  // Drive initialization overlay steps based on state changes
+  useEffect(() => {
+    if (initOverlayDismissed.current || !showInitOverlay) return;
+
+    if (simliReady && initStep === 'avatar') {
+      setInitStep('questions');
+    }
+  }, [simliReady, initStep, showInitOverlay]);
+
+  useEffect(() => {
+    if (initOverlayDismissed.current || !showInitOverlay) return;
+
+    if (interviewState === 'ai_generating' && (initStep === 'avatar' || initStep === 'questions')) {
+      setInitStep('questions');
+      const t = setTimeout(() => setInitStep('recording'), 1200);
+      return () => clearTimeout(t);
+    }
+
+    if (interviewState === 'ai_speaking' && initStep !== 'done' && initStep !== 'ready') {
+      setInitStep('ready');
+    }
+  }, [interviewState, initStep, showInitOverlay]);
+
+  // Dismiss overlay the moment audio actually starts playing
+  useEffect(() => {
+    if (initOverlayDismissed.current || !showInitOverlay) return;
+
+    if (isAudioPlaying && initStep === 'ready') {
+      initOverlayDismissed.current = true;
+      setInitStep('done');
+      setShowInitOverlay(false);
+    }
+  }, [isAudioPlaying, initStep, showInitOverlay]);
+
+  // Fallback: if initOverlay is still showing after 20s, dismiss it
+  useEffect(() => {
+    if (!showInitOverlay) return;
+    const t = setTimeout(() => {
+      if (!initOverlayDismissed.current) {
+        initOverlayDismissed.current = true;
+        setInitStep('done');
+        setShowInitOverlay(false);
+      }
+    }, 20000);
+    return () => clearTimeout(t);
+  }, [showInitOverlay]);
+
   // Format elapsed time
   const minutes = Math.floor(elapsedSeconds / 60);
   const seconds = elapsedSeconds % 60;
@@ -229,7 +314,7 @@ export function ActiveScreen({
 
   // Get last AI message's reasoning (for display under avatar)
   const lastAIEntry = [...transcriptEntries].reverse().find(e => e.speaker === 'ai');
-  const currentReasoning = lastAIEntry?.reasoning;
+  const currentReasoning: string | undefined = undefined;
 
   // Copy transcript as JSON
   const handleCopyTranscript = () => {
@@ -237,8 +322,8 @@ export function ActiveScreen({
       session: {
         sessionId: session?.sessionId,
         candidateName: session?.candidateName,
-        positionTitle: session?.positionTitle,
-        companyName: session?.companyName,
+        assessmentTitle: session?.assessmentTitle,
+        totalQuestions: session?.totalQuestions,
         duration: formattedTime,
       },
       entries: transcriptEntries.map((entry) => ({
@@ -268,6 +353,11 @@ export function ActiveScreen({
   // Compact status config
   const state = interviewState as string;
   const statusConfig = (() => {
+    if (isClosing) {
+      return isAudioPlaying
+        ? { dot: 'bg-blue-500 animate-pulse', text: 'AI Konuşuyor', color: 'text-blue-400', sub: 'Kapanış...' }
+        : null;
+    }
     if (state === 'ai_generating' || state === 'ai_speaking' || isAudioPlaying) {
       return { dot: 'bg-blue-500 animate-pulse', text: 'AI Konuşuyor', color: 'text-blue-400', sub: state === 'ai_generating' ? 'Düşünüyor...' : '' };
     }
@@ -286,27 +376,27 @@ export function ActiveScreen({
     return null;
   })();
 
+  const [showTranscript, setShowTranscript] = useState(false);
+
   return (
-    <div className="h-screen flex flex-col bg-[var(--bg-primary)] relative overflow-hidden">
+    <div className="interview-screen h-screen-safe flex flex-col bg-[var(--bg-primary)] relative overflow-hidden">
       {/* Camera Warning */}
       <CameraWarning />
 
-      {/* Turn change info is shown via the status pill on the avatar */}
-
-      {/* Header */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)]">
-        <div className="flex items-center gap-3">
-          <h1 className="text-sm font-semibold text-[var(--text-primary)]">
+      {/* Header - compact on mobile */}
+      <header className="flex items-center justify-between px-3 py-1.5 lg:px-4 lg:py-2 border-b border-[var(--border-default)] flex-shrink-0 pt-safe">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap">
             AI Interview
           </h1>
-          <span className="text-[var(--text-muted)] text-xs hidden sm:inline">
-            {session?.companyName} - {session?.positionTitle}
+          <span className="text-[var(--text-muted)] text-xs hidden md:inline truncate">
+            {session?.assessmentTitle}
           </span>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Camera integrity summary in header (test mode) */}
+        <div className="flex items-center gap-2 lg:gap-3 flex-shrink-0">
+          {/* Camera integrity - desktop only */}
           {isTestMode && faceDetectionDebugData && faceDetectionDebugData.modelLoaded && (
-            <div className="hidden sm:flex items-center gap-2 text-[10px]">
+            <div className="hidden lg:flex items-center gap-2 text-[10px]">
               <span className={faceDetectionDebugData.faceLostCount > 0 ? 'text-red-400' : 'text-green-400/60'}>
                 {faceDetectionDebugData.faceLostCount}F
               </span>
@@ -318,10 +408,14 @@ export function ActiveScreen({
               </span>
             </div>
           )}
-          <NetworkMetricsPanel />
+          {/* NetworkMetrics - desktop only */}
+          <div className="hidden lg:block">
+            <NetworkMetricsPanel />
+          </div>
+          {/* Debug copy - desktop only */}
           <button
             onClick={handleCopyLogs}
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors ${
+            className={`hidden lg:flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors ${
               copiedLogs ? 'bg-green-500/20 text-green-400' : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
             }`}
             title="Debug loglarını kopyala"
@@ -335,28 +429,30 @@ export function ActiveScreen({
 
       {/* Main Content */}
       <main className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
-        {/* Left Side: Avatar + Camera side by side */}
-        <div className="lg:flex-1 flex flex-col min-h-0 p-3 gap-2">
-          {/* Video feeds row: avatar and camera side-by-side when both present */}
-          <div className={`flex-1 min-h-0 flex ${hasCameraStream ? 'gap-2' : ''}`}>
-            {/* Avatar */}
-            <div className={`${hasCameraStream ? 'flex-1' : 'w-full'} min-h-0 rounded-lg overflow-hidden bg-[var(--bg-secondary)] relative`}>
+        {/* Left Side: Avatar + Camera */}
+        <div className="flex-1 flex flex-col min-h-0 p-2 lg:p-3 gap-1.5 lg:gap-2">
+          {/* Video feeds: side-by-side on desktop, avatar full + camera PIP on mobile
+              IMPORTANT: Single Avatar & CameraPreview instances - refs must not be duplicated */}
+          <div className={`flex-1 min-h-0 relative flex ${hasCameraStream ? 'lg:gap-2' : ''}`}>
+            {/* Avatar container */}
+            <div className={`${hasCameraStream ? 'w-full lg:flex-1' : 'w-full'} min-h-0 rounded-lg overflow-hidden bg-[var(--bg-secondary)] relative`}>
               <Avatar videoRef={videoRef} audioRef={audioRef} />
-              {/* Status pill overlaid on avatar */}
+              {/* Status pill overlaid on avatar - responsive sizing */}
               {!isCompleted && statusConfig && (
-                <div className="absolute bottom-2 left-2 right-2 flex justify-center">
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/60 backdrop-blur-sm">
-                    <div className={`w-1.5 h-1.5 rounded-full ${statusConfig.dot}`} />
-                    <span className={`text-xs font-medium ${statusConfig.color}`}>{statusConfig.text}</span>
-                    {statusConfig.sub && <span className="text-white/40 text-[10px]">{statusConfig.sub}</span>}
+                <div className="absolute bottom-2 sm:bottom-3 left-2 sm:left-3 right-2 sm:right-3 flex justify-center">
+                  <div className="flex items-center gap-1.5 px-3 py-1 sm:py-1.5 rounded-full bg-black/60 backdrop-blur-sm">
+                    <div className={`w-1.5 sm:w-2 h-1.5 sm:h-2 rounded-full ${statusConfig.dot}`} />
+                    <span className={`text-xs sm:text-sm font-medium ${statusConfig.color}`}>{statusConfig.text}</span>
+                    {statusConfig.sub && <span className="text-white/40 text-[10px] sm:text-xs">{statusConfig.sub}</span>}
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Camera Preview (same height as avatar, side by side) */}
+            {/* Camera Preview - PIP on mobile (small overlay), side-by-side on desktop */}
             {hasCameraStream && (
-              <div className="flex-1 min-h-0 rounded-lg overflow-hidden">
+              <div className="absolute top-2 right-2 w-24 h-32 z-10 rounded-lg overflow-hidden shadow-lg border border-white/10
+                              lg:relative lg:inset-auto lg:w-auto lg:h-auto lg:z-auto lg:flex-1 lg:min-h-0 lg:shadow-none lg:border-0">
                 <CameraPreview
                   stream={cameraStream ?? null}
                   cameraVideoRef={cameraVideoRef}
@@ -367,13 +463,13 @@ export function ActiveScreen({
             )}
           </div>
 
-          {/* Phase Indicator + Reasoning (compact row) */}
-          <div className="flex items-center gap-2">
+          {/* Phase Indicator - compact */}
+          <div className="flex items-center gap-2 flex-shrink-0">
             <div className="flex-1">
               <PhaseIndicator />
             </div>
             {currentReasoning && !isCompleted && (
-              <div className="flex-1 flex items-center gap-1.5 px-2 py-1 bg-purple-500/10 border border-purple-500/20 rounded text-[10px]">
+              <div className="hidden lg:flex flex-1 items-center gap-1.5 px-2 py-1 bg-purple-500/10 border border-purple-500/20 rounded text-[10px]">
                 <Lightbulb className="w-3 h-3 text-purple-400 flex-shrink-0" />
                 <p className="text-purple-300 leading-tight line-clamp-1 truncate">
                   {currentReasoning}
@@ -383,8 +479,9 @@ export function ActiveScreen({
           </div>
         </div>
 
-        {/* Right Side: Transcript */}
-        <div className="lg:w-[380px] xl:w-[420px] flex flex-col min-h-0 border-t lg:border-t-0 lg:border-l border-[var(--border-default)] bg-[var(--bg-secondary)]">
+        {/* Right Side: Transcript - desktop always visible, mobile as expandable bottom sheet */}
+        {/* Desktop transcript */}
+        <div className="hidden lg:flex lg:w-[380px] xl:w-[420px] flex-col min-h-0 border-l border-[var(--border-default)] bg-[var(--bg-secondary)]">
           <div className="px-3 py-2 border-b border-[var(--border-default)] flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[var(--text-primary)]">
               Görüşme Kaydı
@@ -411,10 +508,33 @@ export function ActiveScreen({
           </div>
           <TranscriptPanel />
         </div>
+
+        {/* Mobile transcript bottom sheet */}
+        {showTranscript && (
+          <div className="lg:hidden fixed inset-0 z-40 flex flex-col">
+            <div className="flex-1 bg-black/50" onClick={() => setShowTranscript(false)} />
+            <div className="bg-[var(--bg-secondary)] rounded-t-2xl max-h-[60vh] flex flex-col border-t border-[var(--border-default)] shadow-2xl">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-default)]">
+                <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+                  Görüşme Kaydı ({transcriptEntries.length})
+                </h2>
+                <button
+                  onClick={() => setShowTranscript(false)}
+                  className="p-1.5 rounded-lg bg-[var(--bg-tertiary)] text-[var(--text-muted)]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <TranscriptPanel />
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Control Bar + Connection Status combined footer */}
-      {!isCompleted && (
+      {!isClosing && !isCompleted && (
         <ControlBar
           onEndCall={() => setShowEndConfirm(true)}
           onMicToggle={isListening ? onStopListening : onStartListening}
@@ -424,20 +544,27 @@ export function ActiveScreen({
           isAiSpeaking={interviewState === 'ai_speaking' || isAudioPlaying}
           isAiGenerating={interviewState === 'ai_generating'}
           currentTurn={currentTurn}
+          onToggleTranscript={() => setShowTranscript(!showTranscript)}
+          transcriptCount={transcriptEntries.length}
         />
       )}
 
-      <div className="flex justify-center py-1.5 border-t border-[var(--border-default)] bg-[var(--bg-secondary)]">
+      {/* Connection status - desktop only, simplified on mobile */}
+      <div className="hidden lg:flex justify-center py-1.5 border-t border-[var(--border-default)] bg-[var(--bg-secondary)]">
         <ConnectionStatus />
       </div>
 
+      {/* Initialization Loading Overlay */}
+      {showInitOverlay && !isReconnect && (
+        <InitOverlay step={initStep} candidateName={session?.candidateName} />
+      )}
+
       {/* Reconnect Resume Overlay */}
       {showReconnectOverlay && !reconnectResumed.current && (
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[var(--bg-secondary)] rounded-xl p-8 max-w-md mx-4 text-center shadow-2xl border border-[var(--border-default)]">
+        <div className="absolute inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50">
+          <div className="bg-[var(--bg-secondary)] rounded-t-2xl sm:rounded-xl p-6 sm:p-8 w-full sm:max-w-md sm:mx-4 text-center shadow-2xl border-t sm:border border-[var(--border-default)] pb-safe">
             {reconnectLoading ? (
               <>
-                {/* Loading State - Simli initializing after click */}
                 <div className="w-12 h-12 mx-auto mb-4 border-2 border-[var(--accent-primary)] border-t-transparent rounded-full animate-spin" />
                 <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">
                   Avatar Hazırlanıyor...
@@ -448,7 +575,6 @@ export function ActiveScreen({
               </>
             ) : (
               <>
-                {/* Ready State - Waiting for user click */}
                 <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--accent-primary)]/10 flex items-center justify-center">
                   <CheckCircle className="w-10 h-10 text-[var(--accent-primary)]" />
                 </div>
@@ -468,7 +594,7 @@ export function ActiveScreen({
 
                 <button
                   onClick={handleReconnectClick}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg transition-colors font-medium text-lg"
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg transition-colors font-medium text-lg active:scale-[0.98]"
                 >
                   Görüşmeye Devam Et
                 </button>
@@ -480,24 +606,24 @@ export function ActiveScreen({
 
       {/* End Interview Confirmation Overlay */}
       {showEndConfirm && (
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[var(--bg-secondary)] rounded-xl p-8 max-w-md mx-4 text-center shadow-2xl border border-[var(--border-default)]">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--error)]/10 flex items-center justify-center">
-              <PhoneOff className="w-10 h-10 text-[var(--error)]" />
+        <div className="absolute inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50">
+          <div className="bg-[var(--bg-secondary)] rounded-t-2xl sm:rounded-xl p-6 sm:p-8 w-full sm:max-w-md sm:mx-4 text-center shadow-2xl border-t sm:border border-[var(--border-default)] pb-safe">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto mb-4 rounded-full bg-[var(--error)]/10 flex items-center justify-center">
+              <PhoneOff className="w-8 h-8 sm:w-10 sm:h-10 text-[var(--error)]" />
             </div>
 
-            <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">
+            <h2 className="text-lg sm:text-xl font-bold text-[var(--text-primary)] mb-2">
               Görüşmeyi Bitir
             </h2>
 
-            <p className="text-[var(--text-secondary)] mb-6">
+            <p className="text-[var(--text-secondary)] text-sm sm:text-base mb-6">
               Görüşme tamamlanmadan çıkmak istediğinize emin misiniz?
             </p>
 
             <div className="flex gap-3">
               <button
                 onClick={() => setShowEndConfirm(false)}
-                className="flex-1 px-4 py-3 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-primary)] text-[var(--text-secondary)] rounded-lg transition-colors font-medium"
+                className="flex-1 px-4 py-3.5 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-primary)] text-[var(--text-secondary)] rounded-lg transition-colors font-medium active:scale-[0.98]"
               >
                 Vazgeç
               </button>
@@ -506,7 +632,7 @@ export function ActiveScreen({
                   setShowEndConfirm(false);
                   onEndCall();
                 }}
-                className="flex-1 px-4 py-3 bg-[var(--error)] hover:bg-[var(--error)]/80 text-white rounded-lg transition-colors font-medium"
+                className="flex-1 px-4 py-3.5 bg-[var(--error)] hover:bg-[var(--error)]/80 text-white rounded-lg transition-colors font-medium active:scale-[0.98]"
               >
                 Evet, Bitir
               </button>
@@ -515,81 +641,373 @@ export function ActiveScreen({
         </div>
       )}
 
-      {/* Completed Overlay */}
-      {showCompletedOverlay && (
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-[var(--bg-secondary)] rounded-xl p-8 max-w-md mx-4 text-center shadow-2xl border border-[var(--border-default)] relative">
-            {/* Close Button */}
-            <button
-              onClick={() => setShowCompletedOverlay(false)}
-              className="absolute top-4 right-4 p-1 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-              title="Kapat"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {/* Success Icon */}
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-[var(--success)]/10 flex items-center justify-center">
-              <CheckCircle className="w-10 h-10 text-[var(--success)]" />
-            </div>
-
-            <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">
-              Görüşme Tamamlandı
-            </h2>
-            
-            <p className="text-[var(--text-secondary)] mb-4">
-              Zaman ayırdığınız için teşekkür ederiz
-              {session?.candidateName ? `, ${session.candidateName}` : ''}.
-            </p>
-
-            {/* Stats */}
-            <div className="bg-[var(--bg-tertiary)] rounded-lg p-4 mb-4 text-left">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-[var(--text-muted)]">Şirket</p>
-                  <p className="text-[var(--text-primary)] font-medium">
-                    {session?.companyName || '-'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[var(--text-muted)]">Pozisyon</p>
-                  <p className="text-[var(--text-primary)] font-medium">
-                    {session?.positionTitle || '-'}
-                  </p>
-                </div>
-                <div className="col-span-2">
-                  <p className="text-[var(--text-muted)]">Görüşme Süresi</p>
-                  <p className="text-[var(--text-primary)] font-medium">
-                    {formattedTime}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Copy Transcript Button */}
-            <button
-              onClick={handleCopyTranscript}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg transition-colors mb-3"
-            >
-              {copiedJson ? (
-                <>
-                  <Check className="w-5 h-5" />
-                  <span>Transcript Kopyalandı!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-5 h-5" />
-                  <span>Transcript&apos;i JSON Olarak Kopyala</span>
-                </>
-              )}
-            </button>
-
-            <p className="text-[var(--text-muted)] text-xs">
-              Network metriklerini ve transcript&apos;i arka planda inceleyebilirsiniz.
-            </p>
+      {/* Results Overlay - shown after closing speech finishes, before full completion */}
+      {showResultsOverlay && (
+        <div className="absolute inset-0 bg-black/80 flex items-end sm:items-center justify-center z-50">
+          <div className="bg-[var(--bg-secondary)] rounded-t-2xl sm:rounded-xl p-6 sm:p-8 w-full sm:max-w-md sm:mx-4 text-center shadow-2xl border-t sm:border border-[var(--border-default)] pb-safe">
+            <ResultsOverlayContent
+              session={session}
+              formattedTime={formattedTime}
+              callbackDebug={callbackDebug}
+              onCopyTranscript={handleCopyTranscript}
+              copiedJson={copiedJson}
+            />
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+// ---------- Initialization Overlay ----------
+
+type InitStepType = 'avatar' | 'questions' | 'recording' | 'ready' | 'done';
+
+const INIT_STEPS: { key: InitStepType; icon: React.ElementType; label: string }[] = [
+  { key: 'avatar', icon: Radio, label: 'Avatara bağlanıyor...' },
+  { key: 'questions', icon: Brain, label: 'Sorularınız hazırlanıyor...' },
+  { key: 'recording', icon: Disc3, label: 'Kayıt işlemi başlıyor...' },
+  { key: 'ready', icon: Sparkles, label: 'Her şey hazır!' },
+];
+
+function InitOverlay({ step, candidateName }: { step: InitStepType; candidateName?: string }) {
+  const currentIndex = INIT_STEPS.findIndex(s => s.key === step);
+  const isReady = step === 'ready';
+
+  return (
+    <div className={`absolute inset-0 z-50 flex items-center justify-center bg-[var(--bg-primary)] transition-opacity duration-500 ${isReady ? 'opacity-90' : 'opacity-100'}`}>
+      <div className="flex flex-col items-center gap-8 max-w-sm mx-auto px-6 text-center">
+        {/* Logo */}
+        <Image
+          src="/mavi_logo.png"
+          alt="Mavi"
+          width={80}
+          height={80}
+          className="rounded-2xl"
+        />
+
+        {/* Greeting */}
+        <div>
+          <h2 className="text-xl sm:text-2xl font-bold text-[var(--text-primary)]">
+            {isReady ? 'Hazırız!' : 'Görüşmeniz Hazırlanıyor'}
+          </h2>
+          {candidateName && !isReady && (
+            <p className="text-[var(--text-secondary)] mt-1 text-sm">
+              Lütfen birkaç saniye bekleyin, {candidateName}
+            </p>
+          )}
+        </div>
+
+        {/* Step indicators */}
+        <div className="w-full space-y-3">
+          {INIT_STEPS.map((s, i) => {
+            const Icon = s.icon;
+            const isActive = i === currentIndex;
+            const isDone = i < currentIndex;
+            const isPending = i > currentIndex;
+
+            return (
+              <div
+                key={s.key}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-300 ${
+                  isActive
+                    ? 'bg-[var(--accent-primary)]/10 border border-[var(--accent-primary)]/30'
+                    : isDone
+                      ? 'bg-[var(--success)]/5 border border-[var(--success)]/20'
+                      : 'bg-[var(--bg-secondary)] border border-transparent'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  isActive
+                    ? 'bg-[var(--accent-primary)]/20'
+                    : isDone
+                      ? 'bg-[var(--success)]/10'
+                      : 'bg-[var(--bg-tertiary)]'
+                }`}>
+                  {isDone ? (
+                    <Check className="w-4 h-4 text-[var(--success)]" />
+                  ) : isActive ? (
+                    <Icon className="w-4 h-4 text-[var(--accent-primary)] animate-pulse" />
+                  ) : (
+                    <Icon className={`w-4 h-4 ${isPending ? 'text-[var(--text-muted)]' : 'text-[var(--text-secondary)]'}`} />
+                  )}
+                </div>
+                <span className={`text-sm font-medium ${
+                  isActive
+                    ? 'text-[var(--accent-primary)]'
+                    : isDone
+                      ? 'text-[var(--success)]'
+                      : 'text-[var(--text-muted)]'
+                }`}>
+                  {isDone ? s.label.replace('...', '') + ' \u2713' : s.label}
+                </span>
+                {isActive && (
+                  <Loader2 className="w-4 h-4 text-[var(--accent-primary)] animate-spin ml-auto flex-shrink-0" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Progress bar */}
+        <div className="w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-[var(--accent-primary)] to-[var(--success)] rounded-full transition-all duration-700 ease-out"
+            style={{ width: `${((currentIndex + 1) / INIT_STEPS.length) * 100}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Results Overlay Content ----------
+
+function ResultsOverlayContent({
+  session,
+  formattedTime,
+  callbackDebug,
+  onCopyTranscript,
+  copiedJson,
+}: {
+  session: { candidateName: string; assessmentTitle: string; totalQuestions: number } | null;
+  formattedTime: string;
+  callbackDebug: CallbackDebugInfo | null;
+  onCopyTranscript: () => void;
+  copiedJson: boolean;
+}) {
+  const hasCallback = callbackDebug !== null;
+  const callbackSuccess = callbackDebug?.success ?? false;
+
+  return (
+    <>
+      {/* Icon */}
+      <div className="w-16 h-16 mx-auto mb-5 rounded-full flex items-center justify-center"
+        style={{ background: hasCallback ? (callbackSuccess ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)') : 'rgba(59,130,246,0.1)' }}
+      >
+        {hasCallback ? (
+          callbackSuccess ? (
+            <CheckCircle className="w-9 h-9 text-emerald-400" />
+          ) : (
+            <X className="w-9 h-9 text-red-400" />
+          )
+        ) : (
+          <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
+        )}
+      </div>
+
+      {/* Title */}
+      <h2 className="text-xl font-bold text-[var(--text-primary)] mb-2">
+        {hasCallback
+          ? (callbackSuccess ? 'Görüşme Tamamlandı' : 'Sonuçlar Gönderilemedi')
+          : 'Görüşme Sonlandırılıyor...'}
+      </h2>
+
+      {/* Subtitle */}
+      <p className="text-[var(--text-secondary)] text-sm mb-5">
+        {hasCallback
+          ? (callbackSuccess
+              ? `Zaman ayırdığınız için teşekkür ederiz${session?.candidateName ? `, ${session.candidateName}` : ''}.`
+              : 'Sonuçlar gönderilirken bir hata oluştu. Lütfen yöneticinize bildirin.')
+          : 'Sonuçlarınız gönderiliyor, lütfen bu sayfayı kapatmayın...'}
+      </p>
+
+      {/* Stats */}
+      <div className="bg-[var(--bg-tertiary)] rounded-lg p-4 mb-4 text-left">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p className="text-[var(--text-muted)]">Değerlendirme</p>
+            <p className="text-[var(--text-primary)] font-medium text-xs sm:text-sm">{session?.assessmentTitle || '-'}</p>
+          </div>
+          <div>
+            <p className="text-[var(--text-muted)]">Toplam Soru</p>
+            <p className="text-[var(--text-primary)] font-medium">{session?.totalQuestions || '-'}</p>
+          </div>
+          <div className="col-span-2">
+            <p className="text-[var(--text-muted)]">Görüşme Süresi</p>
+            <p className="text-[var(--text-primary)] font-medium">{formattedTime}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Callback status indicator */}
+      {hasCallback ? (
+        <div className={`rounded-lg p-3 mb-5 text-left text-xs border ${
+          callbackSuccess ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'
+        }`}>
+          <div className="flex items-center gap-2">
+            {callbackSuccess ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            ) : (
+              <X className="w-4 h-4 text-red-400 flex-shrink-0" />
+            )}
+            <span className={callbackSuccess ? 'text-emerald-400' : 'text-red-400'}>
+              Sonuçlar {callbackSuccess ? 'başarıyla gönderildi' : 'gönderilemedi'}
+              {callbackDebug?.responseStatus ? ` (${callbackDebug.responseStatus})` : ''}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg p-3 mb-5 text-left text-xs border bg-blue-500/5 border-blue-500/20">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
+            <span className="text-blue-400">Sonuçlar gönderiliyor...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Copy transcript button - only when callback received */}
+      {hasCallback && (
+        <button
+          onClick={onCopyTranscript}
+          className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg transition-colors mb-3 active:scale-[0.98]"
+        >
+          {copiedJson ? (
+            <>
+              <Check className="w-5 h-5" />
+              <span>Transcript Kopyalandı!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-5 h-5" />
+              <span>Transcript&apos;i JSON Olarak Kopyala</span>
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Warning to not close */}
+      {!hasCallback && (
+        <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/5 border border-amber-500/20 rounded-lg">
+          <Loader2 className="w-4 h-4 text-amber-400 animate-spin flex-shrink-0" />
+          <p className="text-amber-300/90 text-xs leading-relaxed">
+            Lütfen bu sayfayı kapatmayın, sonuçlarınız iletiliyor...
+          </p>
+        </div>
+      )}
+
+      {hasCallback && (
+        <p className="text-[var(--text-muted)] text-xs mt-2">
+          Bu pencereyi artık kapatabilirsiniz.
+        </p>
+      )}
+    </>
+  );
+}
+
+// ---------- Completed Overlay Content ----------
+
+function CompletedOverlayContent({
+  session,
+  formattedTime,
+  callbackDebug,
+  onClose,
+  onCopyTranscript,
+  copiedJson,
+}: {
+  session: { candidateName: string; assessmentTitle: string; totalQuestions: number } | null;
+  formattedTime: string;
+  callbackDebug: CallbackDebugInfo | null;
+  onClose: () => void;
+  onCopyTranscript: () => void;
+  copiedJson: boolean;
+}) {
+  return (
+    <>
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 p-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+        title="Kapat"
+      >
+        <X className="w-5 h-5" />
+      </button>
+
+      <div className="w-14 h-14 sm:w-16 sm:h-16 mx-auto mb-4 rounded-full bg-[var(--success)]/10 flex items-center justify-center">
+        <CheckCircle className="w-8 h-8 sm:w-10 sm:h-10 text-[var(--success)]" />
+      </div>
+
+      <h2 className="text-lg sm:text-xl font-bold text-[var(--text-primary)] mb-2">
+        Görüşme Tamamlandı
+      </h2>
+
+      <p className="text-[var(--text-secondary)] text-sm sm:text-base mb-4">
+        Zaman ayırdığınız için teşekkür ederiz
+        {session?.candidateName ? `, ${session.candidateName}` : ''}.
+      </p>
+
+      <div className="bg-[var(--bg-tertiary)] rounded-lg p-4 mb-4 text-left">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <p className="text-[var(--text-muted)]">Değerlendirme</p>
+            <p className="text-[var(--text-primary)] font-medium text-xs sm:text-sm">
+              {session?.assessmentTitle || '-'}
+            </p>
+          </div>
+          <div>
+            <p className="text-[var(--text-muted)]">Toplam Soru</p>
+            <p className="text-[var(--text-primary)] font-medium">
+              {session?.totalQuestions || '-'}
+            </p>
+          </div>
+          <div className="col-span-2">
+            <p className="text-[var(--text-muted)]">Görüşme Süresi</p>
+            <p className="text-[var(--text-primary)] font-medium">
+              {formattedTime}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Callback status — non-blocking inline indicator */}
+      {callbackDebug ? (
+        <div className={`rounded-lg p-3 mb-4 text-left text-xs border ${
+          callbackDebug.success
+            ? 'bg-emerald-500/5 border-emerald-500/20'
+            : 'bg-red-500/5 border-red-500/20'
+        }`}>
+          <div className="flex items-center gap-2">
+            {callbackDebug.success ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            ) : (
+              <X className="w-4 h-4 text-red-400 flex-shrink-0" />
+            )}
+            <span className={callbackDebug.success ? 'text-emerald-400' : 'text-red-400'}>
+              Sonuçlar {callbackDebug.success ? 'başarıyla gönderildi' : 'gönderilemedi'}
+              {callbackDebug.responseStatus && ` (${callbackDebug.responseStatus})`}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg p-3 mb-4 text-left text-xs border bg-blue-500/5 border-blue-500/20">
+          <div className="flex items-center gap-2">
+            <Loader2 className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
+            <span className="text-blue-400">
+              Sonuçlar gönderiliyor...
+            </span>
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={onCopyTranscript}
+        className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-[var(--accent-primary)] hover:bg-[var(--accent-hover)] text-white rounded-lg transition-colors mb-3 active:scale-[0.98]"
+      >
+        {copiedJson ? (
+          <>
+            <Check className="w-5 h-5" />
+            <span>Transcript Kopyalandı!</span>
+          </>
+        ) : (
+          <>
+            <Copy className="w-5 h-5" />
+            <span>Transcript&apos;i JSON Olarak Kopyala</span>
+          </>
+        )}
+      </button>
+
+      <p className="text-[var(--text-muted)] text-xs">
+        Bu pencereyi artık kapatabilirsiniz.
+      </p>
+    </>
   );
 }

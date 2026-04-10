@@ -62,7 +62,7 @@ export function SetupScreen({ onMicPermissionRequest }: SetupScreenProps) {
           </h1>
           {session && (
             <p className="text-[var(--text-secondary)] mt-2">
-              {session.companyName} - {session.positionTitle}
+              {session.assessmentTitle}
             </p>
           )}
         </div>

@@ -1,13 +1,11 @@
 import { config } from '../config/index.js';
 import {
-  createSession,
   getSessionById,
   updateSession,
   createSessionEvent,
   getClient,
 } from '../db/queries/sessions.js';
 import {
-  createConfig,
   getConfigBySessionId,
 } from '../db/queries/configs.js';
 import {
@@ -15,11 +13,7 @@ import {
 } from '../db/queries/transcripts.js';
 import type {
   Session,
-  InterviewConfig,
-  Position,
-  Candidate,
-  InterviewTopic,
-  TranscriptEntry,
+  AssessmentConfig,
   CreateSessionRequest,
   CreateSessionResponse,
   GetSessionResponse,
@@ -33,15 +27,11 @@ import type {
 
 interface SessionWithConfig {
   session: Session;
-  config: InterviewConfig;
+  config: AssessmentConfig;
 }
 
 // ---------- Create Session ----------
 
-/**
- * Create a new interview session with config
- * Called by ATS via POST /sessions
- */
 export async function createInterviewSession(
   request: CreateSessionRequest
 ): Promise<CreateSessionResponse> {
@@ -50,29 +40,26 @@ export async function createInterviewSession(
   try {
     await client.query('BEGIN');
 
-    // 1. Create session
     const sessionResult = await client.query(
-      `INSERT INTO sessions (status, current_phase, current_question_index)
-       VALUES ($1, $2, $3)
+      `INSERT INTO sessions (status, current_phase, current_question_index, external_id, callback_url)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      ['pending', 'introduction', 0]
+      ['pending', 'introduction', 0, request.externalId ?? null, request.callbackUrl ?? null]
     );
     const sessionRow = sessionResult.rows[0];
 
-    // 2. Create interview config
     await client.query(
-      `INSERT INTO interview_configs (session_id, position_data, candidate_data, topics, settings)
+      `INSERT INTO assessment_configs (session_id, assessment_data, questions_data, candidate_data, settings)
        VALUES ($1, $2, $3, $4, $5)`,
       [
         sessionRow.id,
-        JSON.stringify(request.position),
+        JSON.stringify(request.assessment),
+        JSON.stringify(request.questions),
         JSON.stringify(request.candidate),
-        JSON.stringify(request.interview_topics),
         JSON.stringify(request.settings ?? {}),
       ]
     );
 
-    // 3. Log session created event
     await client.query(
       `INSERT INTO session_events (session_id, event_type)
        VALUES ($1, $2)`,
@@ -81,8 +68,7 @@ export async function createInterviewSession(
 
     await client.query('COMMIT');
 
-    // Build join URL
-    const baseUrl = config.frontendUrl || 'http://localhost:3000';
+    const baseUrl = config.frontendUrl || 'http://localhost:2222';
     const joinUrl = `${baseUrl}/interview/${sessionRow.id}`;
 
     return {
@@ -104,10 +90,6 @@ export async function createInterviewSession(
 
 // ---------- Get Session ----------
 
-/**
- * Get session details for display
- * Returns summary info (not full config)
- */
 export async function getSession(
   sessionId: string
 ): Promise<GetSessionResponse | null> {
@@ -116,8 +98,8 @@ export async function getSession(
     return null;
   }
 
-  const config = await getConfigBySessionId(sessionId);
-  if (!config) {
+  const assessmentConfig = await getConfigBySessionId(sessionId);
+  if (!assessmentConfig) {
     return null;
   }
 
@@ -132,20 +114,15 @@ export async function getSession(
       endedAt: session.endedAt,
       createdAt: session.createdAt,
       candidate: {
-        name: config.candidateData.name,
+        name: assessmentConfig.candidateData.name,
       },
-      position: {
-        title: config.positionData.title,
-        company: config.positionData.company.name,
+      assessment: {
+        title: assessmentConfig.assessmentData.title,
       },
     },
   };
 }
 
-/**
- * Get full session with config
- * Used internally for interview engine
- */
 export async function getSessionWithConfig(
   sessionId: string
 ): Promise<SessionWithConfig | null> {
@@ -154,19 +131,16 @@ export async function getSessionWithConfig(
     return null;
   }
 
-  const config = await getConfigBySessionId(sessionId);
-  if (!config) {
+  const assessmentConfig = await getConfigBySessionId(sessionId);
+  if (!assessmentConfig) {
     return null;
   }
 
-  return { session, config };
+  return { session, config: assessmentConfig };
 }
 
 // ---------- Get Transcript ----------
 
-/**
- * Get transcript for a completed session
- */
 export async function getSessionTranscript(
   sessionId: string
 ): Promise<GetTranscriptResponse | null> {
@@ -175,14 +149,13 @@ export async function getSessionTranscript(
     return null;
   }
 
-  const interviewConfig = await getConfigBySessionId(sessionId);
-  if (!interviewConfig) {
+  const assessmentConfig = await getConfigBySessionId(sessionId);
+  if (!assessmentConfig) {
     return null;
   }
 
   const transcriptEntries = await getTranscriptBySessionId(sessionId);
 
-  // Calculate duration
   let totalMinutes = 0;
   if (session.startedAt && session.endedAt) {
     const start = new Date(session.startedAt).getTime();
@@ -190,13 +163,12 @@ export async function getSessionTranscript(
     totalMinutes = Math.round((end - start) / 1000 / 60);
   }
 
-  // Map entries to response format
   const entries: TranscriptEntryResponse[] = transcriptEntries.map((entry) => ({
     sequence: entry.sequenceNumber,
     speaker: entry.speaker,
     content: entry.content,
     phase: entry.phase,
-    topic: entry.questionContext,
+    questionContext: entry.questionContext,
     timestampMs: entry.timestampMs,
   }));
 
@@ -206,11 +178,10 @@ export async function getSessionTranscript(
       sessionId: session.id,
       status: session.status,
       candidate: {
-        name: interviewConfig.candidateData.name,
+        name: assessmentConfig.candidateData.name,
       },
-      position: {
-        title: interviewConfig.positionData.title,
-        company: interviewConfig.positionData.company.name,
+      assessment: {
+        title: assessmentConfig.assessmentData.title,
       },
       duration: {
         startedAt: session.startedAt || '',
@@ -224,9 +195,6 @@ export async function getSessionTranscript(
 
 // ---------- Update Session ----------
 
-/**
- * Start an interview session
- */
 export async function startSession(sessionId: string): Promise<Session | null> {
   const session = await updateSession(sessionId, {
     status: 'active',
@@ -243,9 +211,6 @@ export async function startSession(sessionId: string): Promise<Session | null> {
   return session;
 }
 
-/**
- * End an interview session
- */
 export async function endSession(
   sessionId: string,
   reason: 'completed' | 'candidate_left' | 'technical_error' = 'completed'
@@ -268,9 +233,6 @@ export async function endSession(
   return session;
 }
 
-/**
- * Update session phase
- */
 export async function updateSessionPhase(
   sessionId: string,
   phase: Session['currentPhase'],
@@ -300,21 +262,13 @@ export async function updateSessionPhase(
   return session;
 }
 
-// ---------- Get Interview Config ----------
-
-/**
- * Get interview config for a session
- * Used by WebSocket for connection:ready event
- */
 export async function getInterviewConfig(
   sessionId: string
-): Promise<InterviewConfig | null> {
+): Promise<AssessmentConfig | null> {
   return await getConfigBySessionId(sessionId);
 }
 
-// ---------- Re-exports for convenience ----------
+// ---------- Re-exports ----------
 
 export { getSessionById, updateSession, createSessionEvent };
-
-// Re-export ConversationMessage type
 export type { ConversationMessage } from '@ai-interview/shared';

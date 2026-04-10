@@ -31,36 +31,30 @@ function getEnvVarAsNumber(name: string, defaultValue?: number): number {
 
 export const config = {
   // Server
-  port: getEnvVarAsNumber('PORT', 3001),
+  port: getEnvVarAsNumber('PORT', 2223),
   nodeEnv: getEnvVar('NODE_ENV', 'development'),
   isDevelopment: getEnvVar('NODE_ENV', 'development') === 'development',
   isProduction: getEnvVar('NODE_ENV', 'development') === 'production',
 
   // Frontend URL (for CORS)
-  frontendUrl: getEnvVar('FRONTEND_URL', 'http://localhost:3000'),
+  frontendUrl: getEnvVar('FRONTEND_URL', 'http://localhost:2222'),
 
-  // Database (optional for now, required in Task 1.4)
+  // Database
   databaseUrl: process.env['DATABASE_URL'] ?? '',
 
-  // ATS Integration (optional for now)
-  atsCallbackUrl: process.env['ATS_CALLBACK_URL'] ?? '',
+  // API Key for session creation
   atsApiKey: process.env['ATS_API_KEY'] ?? '',
 
-  // AI Services (optional for now)
-  anthropicApiKey: process.env['ANTHROPIC_API_KEY'] ?? '',
+  // AI Services
   openaiApiKey: process.env['OPENAI_API_KEY'] ?? '',
+  openaiChatModel: process.env['OPENAI_CHAT_MODEL'] ?? 'gpt-5.4-mini',
+  openaiValidatorModel: process.env['OPENAI_VALIDATOR_MODEL'] ?? 'gpt-5.4-nano',
   elevenLabsApiKey: process.env['ELEVENLABS_API_KEY'] ?? '',
-  elevenLabsVoiceId: process.env['ELEVENLABS_VOICE_ID'] ?? 'pFZP5JQG7iQjIQuC4Bku', // Default: Lily
+  elevenLabsVoiceId: process.env['ELEVENLABS_VOICE_ID'] ?? 'pFZP5JQG7iQjIQuC4Bku',
   simliApiKey: process.env['SIMLI_API_KEY'] ?? '',
 
-  // Demo access codes (comma-separated, e.g., "DEMO2026,TESTCODE")
+  // Demo access codes
   demoAccessCodes: (process.env['DEMO_ACCESS_CODES'] ?? 'DEMO2026').split(',').map(c => c.trim().toUpperCase()),
-
-  // MatchMind (HR Portal) Integration
-  // Support both MATCHMIND_* and INTERVIEW_WEBHOOK_* prefixes for compatibility
-  matchmindApiUrl: process.env['MATCHMIND_API_URL'] ?? '',
-  matchmindWebhookUsername: process.env['MATCHMIND_WEBHOOK_USERNAME'] ?? process.env['INTERVIEW_WEBHOOK_USERNAME'] ?? 'interview_app',
-  matchmindWebhookPassword: process.env['MATCHMIND_WEBHOOK_PASSWORD'] ?? process.env['INTERVIEW_WEBHOOK_PASSWORD'] ?? '',
 
   // Audio Recording
   audioRecordingEnabled: process.env['AUDIO_RECORDING_ENABLED'] === 'true',

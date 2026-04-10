@@ -1,5 +1,5 @@
 import { query } from '../index.js';
-import type { TranscriptEntry, SpeakerType, InterviewPhase } from '@ai-interview/shared';
+import type { TranscriptEntry, SpeakerType, AssessmentPhase } from '@ai-interview/shared';
 
 // ============================================
 // TRANSCRIPT DATABASE QUERIES
@@ -13,9 +13,9 @@ interface TranscriptRow {
   sequence_number: number;
   speaker: SpeakerType;
   content: string;
-  phase: InterviewPhase;
+  phase: AssessmentPhase;
   question_context: string | null;
-  timestamp_ms: string; // BIGINT comes as string from pg
+  timestamp_ms: string;
   created_at: Date;
   deleted_at: Date | null;
 }
@@ -25,7 +25,7 @@ interface CreateTranscriptParams {
   sequenceNumber: number;
   speaker: SpeakerType;
   content: string;
-  phase: InterviewPhase;
+  phase: AssessmentPhase;
   questionContext?: string | null;
   timestampMs: number;
 }
@@ -49,9 +49,6 @@ function rowToTranscript(row: TranscriptRow): TranscriptEntry {
 
 // ---------- Queries ----------
 
-/**
- * Create a transcript entry
- */
 export async function createTranscriptEntry(
   params: CreateTranscriptParams
 ): Promise<TranscriptEntry> {
@@ -74,9 +71,6 @@ export async function createTranscriptEntry(
   return rowToTranscript(result.rows[0]!);
 }
 
-/**
- * Get all transcript entries for a session (ordered by sequence)
- */
 export async function getTranscriptBySessionId(
   sessionId: string
 ): Promise<TranscriptEntry[]> {
@@ -90,9 +84,6 @@ export async function getTranscriptBySessionId(
   return result.rows.map(rowToTranscript);
 }
 
-/**
- * Get the last sequence number for a session
- */
 export async function getLastSequenceNumber(
   sessionId: string
 ): Promise<number> {
@@ -105,10 +96,6 @@ export async function getLastSequenceNumber(
   return result.rows[0]?.max ? parseInt(result.rows[0].max, 10) : 0;
 }
 
-/**
- * Get the last transcript entry for a session
- * Used for reconnect - determines what AI should do next
- */
 export async function getLastTranscriptEntry(
   sessionId: string
 ): Promise<TranscriptEntry | null> {
@@ -127,9 +114,6 @@ export async function getLastTranscriptEntry(
   return rowToTranscript(result.rows[0]!);
 }
 
-/**
- * Soft delete all transcript entries for a session
- */
 export async function deleteTranscriptBySessionId(
   sessionId: string
 ): Promise<boolean> {

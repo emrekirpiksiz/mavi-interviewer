@@ -2,38 +2,36 @@ import OpenAI from 'openai';
 import { config } from '../config/index.js';
 import { connectionManager } from '../websocket/connectionManager.js';
 import type {
-  InterviewConfig,
+  AssessmentConfig,
   Session,
-  InterviewPhase,
+  AssessmentPhase,
 } from '@ai-interview/shared';
 
 // ============================================
-// INTERVIEW ENGINE - OPENAI GPT-4o MINI
+// ASSESSMENT ENGINE - OPENAI (configurable model)
 // ============================================
 
 // ---------- Types ----------
 
-export type InterviewActionType = 'ask_question' | 'change_phase' | 'end_interview';
+export type AssessmentActionType = 'ask_question' | 'provide_correction' | 'end_assessment';
 export type InterviewTurn = 'ai' | 'candidate';
 
-export interface InterviewAction {
-  action: InterviewActionType;
-  question: string;
-  nextPhase?: InterviewPhase;
-  topic?: string | null;
-  isFollowUp: boolean;
-  note?: string | null;
-  reasoning?: string | null; // AI'ın neden bu soruyu sorduğunun kısa açıklaması
-  turn: InterviewTurn; // Sıra kimde? AI devam edecekse 'ai', aday cevap verecekse 'candidate'
+export interface AssessmentAction {
+  action: AssessmentActionType;
+  text: string;
+  questionId?: string | null;
+  isCorrect?: boolean | null;
+  turn: InterviewTurn;
+  reasoning?: string | null;
 }
 
 interface ConversationContext {
   session: Session;
-  config: InterviewConfig;
+  config: AssessmentConfig;
   lastAIMessage: string | null;
   lastCandidateMessage: string | null;
   elapsedMinutes: number;
-  phaseQuestionCount: number;
+  currentQuestionIndex: number;
 }
 
 // ---------- OpenAI Client ----------
@@ -54,22 +52,15 @@ function getOpenAIClient(): OpenAI {
 
 // ---------- Constants ----------
 
-// Using GPT-4o mini for fast, cost-effective responses
-const OPENAI_MODEL = 'gpt-4o-mini';
+const OPENAI_MODEL = config.openaiChatModel;
 const MAX_TOKENS = 1024;
 const TIMEOUT_MS = 15000;
-const MAX_DURATION_MINUTES = 30;
 
 // ---------- Response Parser ----------
 
-/**
- * Parse OpenAI's JSON response into InterviewAction
- */
-export function parseOpenAIResponse(content: string): InterviewAction {
-  // Extract JSON from potential markdown code blocks
+export function parseAssessmentResponse(content: string): AssessmentAction {
   let jsonStr = content.trim();
   
-  // Handle markdown code blocks
   const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (jsonMatch && jsonMatch[1]) {
     jsonStr = jsonMatch[1].trim();
@@ -78,120 +69,63 @@ export function parseOpenAIResponse(content: string): InterviewAction {
   try {
     const parsed = JSON.parse(jsonStr);
     
-    // Infer action if missing but text content exists
-    if (!parsed.action || !['ask_question', 'change_phase', 'end_interview'].includes(parsed.action)) {
-      const text = parsed.question || parsed.message || parsed.text;
+    if (!parsed.action || !['ask_question', 'provide_correction', 'end_assessment'].includes(parsed.action)) {
+      const text = parsed.text || parsed.question || parsed.message;
       if (text) {
-        console.warn(`[InterviewEngine] Missing/invalid action, inferring ask_question from text content`);
+        console.warn(`[AssessmentEngine] Missing/invalid action, inferring ask_question`);
         parsed.action = 'ask_question';
-        if (!parsed.question) parsed.question = text;
+        if (!parsed.text) parsed.text = text;
       } else {
-        throw new Error('Invalid or missing action field and no text content to recover');
+        throw new Error('Invalid or missing action field and no text content');
       }
     }
     
-    // Ensure question is present for ask_question and change_phase
-    if ((parsed.action === 'ask_question' || parsed.action === 'change_phase') && !parsed.question) {
-      if (parsed.message) {
-        parsed.question = parsed.message;
-      } else {
-        throw new Error('Question is required for ask_question and change_phase actions');
-      }
+    if (!parsed.text) {
+      parsed.text = parsed.question || parsed.message || '';
     }
     
-    // Validate nextPhase for change_phase action
-    const validPhases: InterviewPhase[] = ['introduction', 'experience', 'technical', 'behavioral', 'motivation', 'closing'];
-    
-    // If change_phase but nextPhase is missing, try to infer it
-    let nextPhase = parsed.nextPhase;
-    let action = parsed.action;
-    
-    if (action === 'change_phase') {
-      // Step 1: Try to use topic as nextPhase (AI sometimes confuses these)
-      if (!nextPhase && parsed.topic && validPhases.includes(parsed.topic as InterviewPhase)) {
-        console.log(`[InterviewEngine] nextPhase missing, using topic as nextPhase: ${parsed.topic}`);
-        nextPhase = parsed.topic;
-      }
-      
-      // Step 2: Try to infer from question text
-      if (!validPhases.includes(nextPhase as InterviewPhase)) {
-        const questionLower = (parsed.question || '').toLowerCase();
-        
-        // Check if question mentions a specific phase
-        if (questionLower.includes('teknik') || questionLower.includes('technical')) {
-          nextPhase = 'technical';
-          console.log(`[InterviewEngine] Inferred nextPhase from question: technical`);
-        } else if (questionLower.includes('deneyim') || questionLower.includes('experience')) {
-          nextPhase = 'experience';
-          console.log(`[InterviewEngine] Inferred nextPhase from question: experience`);
-        } else if (questionLower.includes('davranış') || questionLower.includes('behavioral') || questionLower.includes('çalışma tarzı')) {
-          nextPhase = 'behavioral';
-          console.log(`[InterviewEngine] Inferred nextPhase from question: behavioral`);
-        } else if (questionLower.includes('motivasyon') || questionLower.includes('kariyer')) {
-          nextPhase = 'motivation';
-          console.log(`[InterviewEngine] Inferred nextPhase from question: motivation`);
-        } else if (questionLower.includes('kapanış') || questionLower.includes('soru')) {
-          nextPhase = 'closing';
-          console.log(`[InterviewEngine] Inferred nextPhase from question: closing`);
-        }
-      }
-      
-      // Step 3: If still invalid, convert to ask_question instead of failing
-      if (!validPhases.includes(nextPhase as InterviewPhase)) {
-        console.warn(`[InterviewEngine] Could not determine nextPhase, converting change_phase to ask_question`);
-        action = 'ask_question';
-        nextPhase = undefined;
-      }
+    if (parsed.reasoning) {
+      console.log('[AssessmentEngine] Reasoning:', parsed.reasoning);
     }
-    
+
     return {
-      action: action, // May have been converted from change_phase to ask_question
-      question: parsed.question || '',
-      nextPhase: nextPhase,
-      topic: parsed.topic ?? null,
-      isFollowUp: parsed.isFollowUp ?? false,
-      note: parsed.note ?? null,
+      action: parsed.action,
+      text: parsed.text || '',
+      questionId: parsed.questionId ?? null,
+      isCorrect: parsed.isCorrect ?? null,
+      turn: parsed.turn === 'ai' ? 'ai' : 'candidate',
       reasoning: parsed.reasoning ?? null,
-      turn: parsed.turn === 'ai' ? 'ai' : 'candidate', // Default: candidate (aday cevap verecek)
     };
   } catch (error) {
-    console.error('[InterviewEngine] Failed to parse OpenAI response:', error);
-    console.error('[InterviewEngine] Raw content:', content);
-    
-    // Fallback: Try to create a sensible response
-    throw new Error(`Failed to parse OpenAI response: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    console.error('[AssessmentEngine] Failed to parse response:', error);
+    console.error('[AssessmentEngine] Raw content:', content);
+    throw new Error(`Failed to parse response: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
-// Backwards compatibility alias
-export const parseClaudeResponse = parseOpenAIResponse;
-
 // ---------- Message Builder ----------
 
-/**
- * Build the user message for each conversation turn
- * If lastCandidateMessage is null, AI is continuing (turn was "ai")
- */
 export function buildUserMessage(context: ConversationContext): string {
-  const { session, config: interviewConfig, lastAIMessage, lastCandidateMessage, elapsedMinutes, phaseQuestionCount } = context;
+  const { session, config: assessmentConfig, lastAIMessage, lastCandidateMessage, elapsedMinutes, currentQuestionIndex } = context;
   
-  const maxDurationMinutes = MAX_DURATION_MINUTES;
-  const timeWarning = elapsedMinutes > maxDurationMinutes * 0.8 
-    ? '\n\n⚠️ UYARI: Süre azalıyor, görüşmeyi toparlayalım.'
+  const totalQuestions = assessmentConfig.questionsData.length;
+  const maxDuration = assessmentConfig.settings?.maxDurationMinutes ?? 45;
+  
+  const timeWarning = elapsedMinutes > maxDuration * 0.8
+    ? '\n\n⚠️ UYARI: Süre azalıyor, hızlanmalıyız.'
     : '';
   
-  const forceClosing = elapsedMinutes >= maxDurationMinutes
-    ? '\n\n🚨 KRİTİK: Süre doldu! Hemen closing fazına geç ve görüşmeyi bitir.'
+  const forceEnd = elapsedMinutes >= maxDuration
+    ? '\n\n🚨 KRİTİK: Süre doldu! Hemen kapanış metnini söyle ve bitir.'
     : '';
   
-  // Check if this is a continuation (AI's turn, no candidate response)
   const isContinuation = lastCandidateMessage === null && lastAIMessage !== null;
   
-  let message = `## MEVCUT DURUM
+  return `## MEVCUT DURUM
 - Faz: ${session.currentPhase}
-- Geçen süre: ${elapsedMinutes} dk / ${maxDurationMinutes} dk
-- Bu fazda soru sayısı: ${phaseQuestionCount}
-${timeWarning}${forceClosing}
+- Soru ilerlemesi: ${currentQuestionIndex}/${totalQuestions}
+- Geçen süre: ${elapsedMinutes} dk / ${maxDuration} dk
+${timeWarning}${forceEnd}
 
 ## SON KONUŞMA
 AI: "${lastAIMessage || '(henüz konuşma yok)'}"
@@ -202,53 +136,42 @@ ${isContinuation
 
 ## GÖREV
 ${isContinuation 
-  ? `Önceki mesajında turn: "ai" döndürdün, yani devam etmen gerekiyor.
-Şimdi görüşme akışını anlat ve adaya ilk soruyu sor.
-Bu sefer turn: "candidate" döndür ki aday cevap verebilsin.`
-  : `Doğal bir recruiter olarak sonraki adımı belirle.
-Cevabı değerlendirme, sadece sohbeti ilerlet.`
+  ? `Önceki mesajında turn: "ai" döndürdün. Şimdi devam et - sıradaki soruyu sor veya giriş metninin devamını söyle.
+Bu sefer turn: "candidate" döndür.`
+  : `Adayın cevabını değerlendir ve sıradaki adımı belirle.
+Cevap doğruysa kısa olumlu geri bildirim ver ve sıradaki soruya geç.
+Cevap yanlışsa ilgili sorunun "correctOnWrong" kuralına göre davran.
+Tüm sorular bittiyse kapanış metnini söyle.`
 }`;
-
-  return message;
 }
 
-/**
- * Build the first turn message (interview start)
- * First message is split into 2 parts for more natural flow
- */
-export function buildFirstTurnMessage(session: Session, interviewConfig: InterviewConfig): string {
+export function buildFirstTurnMessage(): string {
   return `## DURUM
-Görüşme başlıyor. Bu ilk mesaj olacak.
+Değerlendirme başlıyor. Bu ilk mesaj olacak.
 
 ## GÖREV
 System prompt'taki "İLK MESAJ FORMATI - 2 PARÇALI" bölümünü takip et.
 
 Bu PARÇA 1:
-- Sadece kısa karşılama ve AI bildirimi yap (2-3 cümle)
+- Giriş metninin ilk kısmını söyle (selamlama, hal hatır)
 - turn: "ai" döndür (mikrofon açılmasın, sistem seni tekrar çağıracak)
-
-Örnek:
-"Merhaba [aday adı], [şirket] adına hoş geldiniz! Bu görüşme yapay zeka destekli olarak gerçekleştiriliyor. Herhangi bir teknik sorun fark ederseniz bize bildirin."
 
 ÖNEMLİ: Sadece karşılama yap, soru sorma! turn: "ai" döndür.`;
 }
 
 // ---------- Main Functions ----------
 
-/**
- * Get the first question to start the interview
- */
 export async function getFirstQuestion(
   session: Session,
-  interviewConfig: InterviewConfig,
+  assessmentConfig: AssessmentConfig,
   systemPrompt: string,
   sessionId?: string
-): Promise<InterviewAction> {
+): Promise<AssessmentAction> {
   const client = getOpenAIClient();
   
-  const userMessage = buildFirstTurnMessage(session, interviewConfig);
+  const userMessage = buildFirstTurnMessage();
   
-  console.log('[InterviewEngine] Getting first question with GPT-4o mini...');
+  console.log('[AssessmentEngine] Getting first message...');
   
   const startTime = Date.now();
   
@@ -256,7 +179,7 @@ export async function getFirstQuestion(
     const response = await Promise.race([
       client.chat.completions.create({
         model: OPENAI_MODEL,
-        max_tokens: MAX_TOKENS,
+        max_completion_tokens: MAX_TOKENS,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
@@ -275,10 +198,9 @@ export async function getFirstQuestion(
       throw new Error('No content in OpenAI response');
     }
     
-    const action = parseOpenAIResponse(content);
-    console.log('[InterviewEngine] First question action:', action.action, `(${durationMs}ms)`);
+    const action = parseAssessmentResponse(content);
+    console.log('[AssessmentEngine] First message action:', action.action, `(${durationMs}ms)`);
     
-    // Send network metric with full request/response details
     if (sessionId) {
       connectionManager.sendNetworkMetric(sessionId, 'openai', 'first_question', durationMs, {
         inputSize: systemPrompt.length + userMessage.length,
@@ -291,14 +213,10 @@ export async function getFirstQuestion(
         requestDetails: {
           url: 'https://api.openai.com/v1/chat/completions',
           method: 'POST',
-          body: {
-            model: OPENAI_MODEL,
-            systemPrompt: systemPrompt,
-            userMessage: userMessage,
-          },
+          body: { model: OPENAI_MODEL, systemPrompt, userMessage },
         },
         responseDetails: {
-          content: content,
+          content,
           parsed: action,
           usage: {
             promptTokens: response.usage?.prompt_tokens,
@@ -311,32 +229,28 @@ export async function getFirstQuestion(
     
     return action;
   } catch (error) {
-    console.error('[InterviewEngine] Error getting first question:', error);
+    console.error('[AssessmentEngine] Error getting first message:', error);
     throw error;
   }
 }
 
-/**
- * Get the next action based on candidate's response
- */
 export async function getNextAction(
   context: ConversationContext,
   systemPrompt: string,
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
   sessionId?: string
-): Promise<InterviewAction> {
+): Promise<AssessmentAction> {
   const client = getOpenAIClient();
   
   const userMessage = buildUserMessage(context);
   
-  // Build messages array with conversation history
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system', content: systemPrompt },
     ...conversationHistory,
     { role: 'user', content: userMessage },
   ];
   
-  console.log('[InterviewEngine] Getting next action for phase:', context.session.currentPhase);
+  console.log('[AssessmentEngine] Getting next action, question index:', context.currentQuestionIndex);
   
   const startTime = Date.now();
   
@@ -344,7 +258,7 @@ export async function getNextAction(
     const response = await Promise.race([
       client.chat.completions.create({
         model: OPENAI_MODEL,
-        max_tokens: MAX_TOKENS,
+        max_completion_tokens: MAX_TOKENS,
         messages,
         response_format: { type: 'json_object' },
       }),
@@ -360,10 +274,9 @@ export async function getNextAction(
       throw new Error('No content in OpenAI response');
     }
     
-    const action = parseOpenAIResponse(content);
-    console.log('[InterviewEngine] Next action:', action.action, action.nextPhase ? `-> ${action.nextPhase}` : '', `(${durationMs}ms)`);
+    const action = parseAssessmentResponse(content);
+    console.log('[AssessmentEngine] Next action:', action.action, `(${durationMs}ms)`);
     
-    // Send network metric with full request/response details
     if (sessionId) {
       const totalInputSize = systemPrompt.length + conversationHistory.reduce((acc, m) => acc + m.content.length, 0) + userMessage.length;
       connectionManager.sendNetworkMetric(sessionId, 'openai', 'next_action', durationMs, {
@@ -378,15 +291,10 @@ export async function getNextAction(
         requestDetails: {
           url: 'https://api.openai.com/v1/chat/completions',
           method: 'POST',
-          body: {
-            model: OPENAI_MODEL,
-            systemPrompt: systemPrompt,
-            userMessage: userMessage,
-            messages: conversationHistory,
-          },
+          body: { model: OPENAI_MODEL, systemPrompt, userMessage, messages: conversationHistory },
         },
         responseDetails: {
-          content: content,
+          content,
           parsed: action,
           usage: {
             promptTokens: response.usage?.prompt_tokens,
@@ -399,14 +307,11 @@ export async function getNextAction(
     
     return action;
   } catch (error) {
-    console.error('[InterviewEngine] Error getting next action:', error);
+    console.error('[AssessmentEngine] Error getting next action:', error);
     throw error;
   }
 }
 
-/**
- * Handle interview interrupt - generate a short acknowledgment
- */
 export async function getInterruptResponse(systemPrompt: string): Promise<string> {
   const client = getOpenAIClient();
   
@@ -416,7 +321,7 @@ export async function getInterruptResponse(systemPrompt: string): Promise<string
     const response = await Promise.race([
       client.chat.completions.create({
         model: OPENAI_MODEL,
-        max_tokens: 100,
+        max_completion_tokens: 100,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage }
@@ -432,16 +337,9 @@ export async function getInterruptResponse(systemPrompt: string): Promise<string
       return 'Buyurun, sizi dinliyorum.';
     }
     
-    // Return raw text for interrupt (no JSON parsing)
     return content.trim();
   } catch (error) {
-    console.error('[InterviewEngine] Error getting interrupt response:', error);
+    console.error('[AssessmentEngine] Error getting interrupt response:', error);
     return 'Buyurun, sizi dinliyorum.';
   }
 }
-
-// ---------- Exports ----------
-
-// Export with backwards compatible naming
-export const CLAUDE_MODEL = OPENAI_MODEL;
-export { MAX_TOKENS, TIMEOUT_MS, MAX_DURATION_MINUTES };

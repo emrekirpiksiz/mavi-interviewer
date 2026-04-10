@@ -11,7 +11,7 @@ import type { NetworkMetric } from '@ai-interview/shared';
 // Speech-to-text using OpenAI Whisper API via backend
 // Includes Web Speech API for real-time interim transcripts
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:2223';
 const MIN_RECORDING_SECONDS = 2; // Minimum 2 seconds
 
 export interface UseWhisperOptions {
