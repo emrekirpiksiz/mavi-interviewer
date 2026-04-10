@@ -1,3 +1,8 @@
+import { webcrypto } from 'node:crypto';
+if (!globalThis['crypto']) {
+  (globalThis as Record<string, unknown>)['crypto'] = webcrypto;
+}
+
 import { createServer } from 'http';
 import { createApp } from './app.js';
 import { config } from './config/index.js';
