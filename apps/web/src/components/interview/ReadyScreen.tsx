@@ -588,7 +588,7 @@ function CompactCheckItem({ icon: Icon, label, status, statusText, onRetry }: Co
       ) : (
         <div className="flex items-center gap-1 flex-shrink-0">
           <config.icon className={`w-4 h-4 ${config.color}`} />
-          {onRetry && status !== 'loading' && (
+          {onRetry && (
             <button onClick={onRetry} className="p-1 rounded hover:bg-[var(--bg-secondary)] transition-colors" title="Tekrar dene">
               <RefreshCw className="w-3 h-3 text-[var(--text-muted)]" />
             </button>
